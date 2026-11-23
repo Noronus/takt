@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Takt-MOTIS</Name>
+  <Repository>ghcr.io/motis-project/motis:__MOTIS_VERSION__</Repository>
+  <Registry>https://github.com/motis-project/motis/pkgs/container/motis</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <MyMAC/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/motis-project/motis</Support>
+  <Project>https://github.com/motis-project/motis</Project>
+  <ReadMe/>
+  <Overview>MOTIS journey planner for Takt. Runs /data/run.sh, which is written by the Takt container: it imports the prepared MDV timetable + OpenStreetMap into a new build folder whenever Takt publishes a new version and then switches over. Realtime comes from Takt every 30 s. Web UI for debugging on the port below.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/motis-project/motis/master/ui/static/favicon.png</Icon>
+  <ExtraParams>--user=99:100 --restart=unless-stopped --cap-drop=ALL --security-opt=no-new-privileges --memory=8g --entrypoint=sh</ExtraParams>
+  <PostArgs>/data/run.sh</PostArgs>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Takt (writes /data/run.sh and /data/input)</Requires>
+  <Config Name="Port" Target="8080" Default="__MOTIS_PORT__" Mode="tcp" Description="MOTIS API + debug UI" Type="Port" Display="always" Required="true" Mask="false">__MOTIS_PORT__</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/takt/motis" Mode="rw" Description="Same as Takt data folder + /motis" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/takt/motis</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

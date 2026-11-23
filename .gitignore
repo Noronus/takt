@@ -1,0 +1,15 @@
+phase0/data/
+phase0/.venv/
+phase0/insa/
+phase0/motistest/
+node_modules/
+deploy.env
+dev-data/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+*.jks
+phase0/comp.yaml
+phase0/motis-openapi.yaml

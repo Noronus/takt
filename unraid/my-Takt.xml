@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Takt</Name>
+  <Repository>takt:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <MyMAC/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <ReadMe/>
+  <Overview>Takt backend for the Leipzig/MDV transit app. Downloads the open DELFI timetable (gtfs.de) weekly and OpenStreetMap monthly, cuts them to the MDV area, prepares the input for the Takt-MOTIS container, filters the DELFI GTFS-Realtime feed and serves a small JSON API for the Android app. S-Bahn/regional realtime and disruption messages come from INSA. Image is built locally (deploy.sh). Data: DELFI e.V. / gtfs.de (CC BY 4.0, realtime CC BY-SA 4.0), OpenStreetMap contributors (ODbL).</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/api/v1/status</WebUI>
+  <TemplateURL/>
+  <Icon>http://__HOST__:__API_PORT__/icon.png</Icon>
+  <ExtraParams>--user=99:100 --restart=unless-stopped --cap-drop=ALL --security-opt=no-new-privileges --memory=4g</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Takt-MOTIS (journey planner and departures, uses the folder motis/ inside this container's data folder)</Requires>
+  <Config Name="API-Port" Target="8080" Default="__API_PORT__" Mode="tcp" Description="Port the app connects to (keep it private: LAN or VPN only)" Type="Port" Display="always" Required="true" Mask="false">__API_PORT__</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/takt" Mode="rw" Description="Cache, prepared timetable, station list. Subfolder motis/ is mounted into Takt-MOTIS." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/takt</Config>
+  <Config Name="MOTIS-URL" Target="MOTIS_URL" Default="http://__HOST__:__MOTIS_PORT__" Mode="" Description="Where this container reaches Takt-MOTIS" Type="Variable" Display="always" Required="true" Mask="false">http://__HOST__:__MOTIS_PORT__</Config>
+  <Config Name="Eigene URL fuer MOTIS" Target="SELF_URL" Default="http://__HOST__:__API_PORT__" Mode="" Description="Where Takt-MOTIS reaches this container (for the filtered realtime feed)" Type="Variable" Display="always" Required="true" Mask="false">http://__HOST__:__API_PORT__</Config>
+  <Config Name="Gebiet (BBOX)" Target="BBOX" Default="11.40,50.95,13.20,51.75" Mode="" Description="minLon,minLat,maxLon,maxLat of the area to keep" Type="Variable" Display="advanced" Required="false" Mask="false">11.40,50.95,13.20,51.75</Config>
+  <Config Name="Echtzeit aktiv (s)" Target="RT_ACTIVE_INTERVAL" Default="30" Mode="" Description="Realtime poll interval while the app is in use (feed is ~6 MB per fetch)" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="Echtzeit idle (s)" Target="RT_IDLE_INTERVAL" Default="300" Mode="" Description="Realtime poll interval when the app was not used for 15 min" Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
+  <Config Name="INSA" Target="INSA_ENABLED" Default="true" Mode="" Description="Use INSA HAFAS for S-Bahn realtime, disruptions and as fallback (unofficial)" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="API-Token" Target="API_TOKEN" Default="" Mode="" Description="Optional. If set, the app must send it (Settings in the app)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

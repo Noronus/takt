@@ -1,0 +1,21 @@
+{
+  "name": "takt-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@fastify/compress": "^9.3.0",
+    "fastify": "^5.12.8",
+    "gtfs-realtime-bindings": "^3.0.0",
+    "hafas-client": "^6.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}

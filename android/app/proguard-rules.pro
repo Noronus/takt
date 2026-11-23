@@ -1,0 +1,10 @@
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keepclassmembers class app.takt.data.** { *** Companion; }
+-keepclasseswithmembers class app.takt.data.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep class org.maplibre.** { *; }
+-dontwarn org.maplibre.**
+-dontwarn okhttp3.internal.platform.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
