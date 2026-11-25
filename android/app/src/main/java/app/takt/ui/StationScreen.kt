@@ -45,7 +45,7 @@ fun StationScreen(stationId: String, nav: Nav) {
     val name = live.data?.value?.station?.name ?: st?.name ?: stationId
     val now = nowMs() / 1000
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") }
             Spacer(Modifier.weight(1f))
             AgeChip(live.data, live.loading, live.error, compact = true)

@@ -286,8 +286,7 @@ fun SectionTitle(t: String, modifier: Modifier = Modifier) {
 fun ScreenTitle(t: String, modifier: Modifier = Modifier, age: (@Composable () -> Unit)? = null, actions: @Composable () -> Unit = {}) {
     // own background: the bar stays on top while the list scrolls under it
     Row(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(t, style = MaterialTheme.typography.headlineLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+        Text(t, style = MaterialTheme.typography.headlineLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(end = 8.dp))
         if (age != null) { age(); Spacer(Modifier.width(4.dp)) }
         actions()
     }
