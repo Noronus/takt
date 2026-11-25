@@ -76,8 +76,7 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
                 (nq.isBlank() || Stations.norm("${a.title} ${a.text} ${a.company} ${a.lines.joinToString(" ")} ${a.stops.joinToString(" ")}").contains(nq))
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
-            item { ScreenTitle("Störungen") { SettingsButton(nav) } }
-            item { Row(Modifier.padding(horizontal = 20.dp)) { AgeChip(live.data, live.loading, live.error) } }
+            stickyHeader { ScreenTitle("Störungen", age = { AgeChip(live.data, live.loading, live.error, compact = true) }) { SettingsButton(nav) } }
             item { ErrorLine(live.error) }
             item { SearchField(q, { q = it }, "Linie, Haltestelle, Stichwort") }
             if (lines.isNotEmpty() || picked.isNotEmpty()) item {

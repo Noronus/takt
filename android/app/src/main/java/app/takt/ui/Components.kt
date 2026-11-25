@@ -154,16 +154,18 @@ fun ModeDots(modes: Int, size: Dp = 22.dp) {
  * Green < 90 s, amber < 5 min, red otherwise.
  */
 @Composable
-fun AgeChip(data: Timed<*>?, loading: Boolean, error: String?, modifier: Modifier = Modifier) {
+/** Age of the shown data. [compact]: only dot and age ("42 s"), for the title bar. */
+fun AgeChip(data: Timed<*>?, loading: Boolean, error: String?, modifier: Modifier = Modifier, compact: Boolean = false) {
     val now = nowMs()
     val (text, color) = when {
         data == null && loading -> "lädt …" to MaterialTheme.colorScheme.outline
-        data == null -> "keine Daten" to Palette.bad
+        data == null -> (if (compact) "keine" else "keine Daten") to Palette.bad
         else -> {
             val age = data.ageSeconds(now)
             val c = when { age < 90 -> Palette.ok; age < 300 -> Palette.warn; else -> Palette.bad }
-            val prefix = if (data.fromCache || error != null) "offline · " else ""
-            "${prefix}Daten ${ageText(age)} alt" to c
+            val offline = data.fromCache || error != null
+            if (compact) (if (offline) "offline · " else "") + ageText(age) to c
+            else "${if (offline) "offline · " else ""}Daten ${ageText(age)} alt" to c
         }
     }
     Row(
@@ -176,7 +178,7 @@ fun AgeChip(data: Timed<*>?, loading: Boolean, error: String?, modifier: Modifie
         Box(Modifier.size(7.dp).clip(CircleShape).background(if (loading) MaterialTheme.colorScheme.primary else color))
         Spacer(Modifier.width(6.dp))
         Text(
-            if (loading && data != null) "$text · lädt" else text,
+            if (loading && data != null && !compact) "$text · lädt" else text,
             style = MaterialTheme.typography.labelMedium.merge(Tnum), color = MaterialTheme.colorScheme.onSurface,
         )
     }
@@ -281,9 +283,12 @@ fun SectionTitle(t: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun ScreenTitle(t: String, modifier: Modifier = Modifier, actions: @Composable () -> Unit = {}) {
-    Row(modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(t, style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
+fun ScreenTitle(t: String, modifier: Modifier = Modifier, age: (@Composable () -> Unit)? = null, actions: @Composable () -> Unit = {}) {
+    // own background: the bar stays on top while the list scrolls under it
+    Row(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(t, style = MaterialTheme.typography.headlineLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+        if (age != null) { age(); Spacer(Modifier.width(4.dp)) }
         actions()
     }
 }

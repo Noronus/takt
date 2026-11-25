@@ -212,8 +212,8 @@ fun JourneyScreen(nav: Nav) {
     @Suppress("UNUSED_VARIABLE") val g0 = guidedState
     val nowS = nowMs() / 1000
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = listState, contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
-        item {
-            ScreenTitle("Route") {
+        stickyHeader {
+            ScreenTitle("Route", age = if (live.data != null || live.loading || live.error != null) ({ AgeChip(live.data, live.loading, live.error, compact = true) }) else null) {
                 if (f != null && t != null) {
                     val fav = favRoutes.any { it.from.param() == f.param() && it.to.param() == t.param() }
                     IconButton(onClick = { app.prefs.toggleFavRoute(FavRoute(f, t)) }) {
@@ -244,9 +244,6 @@ fun JourneyScreen(nav: Nav) {
                 PillButton(PlanState.time?.let { dayTime(it) } ?: "Jetzt", Icons.Rounded.Schedule, primary = false, onClick = { timeDialog = true })
                 if (PlanState.time != null) TextButton(onClick = { PlanState.time = null; search() }) { Text("Jetzt") }
             }
-        }
-        if (live.data != null || live.loading || live.error != null) item {
-            Row(Modifier.padding(horizontal = 20.dp, vertical = 2.dp)) { AgeChip(live.data, live.loading, live.error) }
         }
         item { ErrorLine(live.error) }
 

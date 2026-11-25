@@ -48,14 +48,14 @@ fun StationScreen(stationId: String, nav: Nav) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") }
             Spacer(Modifier.weight(1f))
+            AgeChip(live.data, live.loading, live.error, compact = true)
             IconButton(onClick = { app.prefs.toggleFavStation(stationId) }) {
                 Icon(if (stationId in favs) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Favorit", tint = if (stationId in favs) Palette.warn else MaterialTheme.colorScheme.onSurface)
             }
         }
         Text(shortName(name), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp))
         Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (st != null) { ModeDots(st.modes); Spacer(Modifier.width(10.dp)) }
-            AgeChip(live.data, live.loading, live.error)
+            if (st != null) ModeDots(st.modes)
         }
         Row(Modifier.padding(horizontal = 16.dp)) {
             PillButton("Von hier", Icons.Rounded.TripOrigin, primary = true, onClick = { nav.setStart(SavedPlace(name, stationId)) })

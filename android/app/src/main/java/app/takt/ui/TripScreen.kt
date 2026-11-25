@@ -56,15 +56,21 @@ fun TripScreen(tripId: String, line: String, nav: Nav) {
     val t = live.data?.value
     val now = nowMs() / 1000
     val accent = parseColor(t?.color) ?: t?.mode?.let(::modeColor)?.takeIf { t.mode != "other" } ?: MaterialTheme.colorScheme.primary
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 32.dp)) {
+    // top bar outside the list: back and data age stay visible while scrolling the stops
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") }
+        Spacer(Modifier.weight(1f))
+        AgeChip(live.data, live.loading, live.error, compact = true)
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
-            Row(Modifier.padding(horizontal = 4.dp)) { IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") } }
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 LineBadge(t?.line ?: line, t?.mode ?: "other", t?.color)
                 Spacer(Modifier.width(12.dp))
                 Text(t?.dir ?: "", style = MaterialTheme.typography.headlineSmall)
             }
-            Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) { AgeChip(live.data, live.loading, live.error) }
+            Spacer(Modifier.height(10.dp))
             ErrorLine(live.error)
             if (t != null && !t.realtime) Text("Keine Echtzeit für diese Fahrt – Soll-Fahrplan.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (t?.cancelled == true) Text("Diese Fahrt fällt aus.", Modifier.padding(horizontal = 20.dp), color = Palette.bad, style = MaterialTheme.typography.titleSmall)
@@ -96,5 +102,6 @@ fun TripScreen(tripId: String, line: String, nav: Nav) {
                 }
             }
         }
+    }
     }
 }
