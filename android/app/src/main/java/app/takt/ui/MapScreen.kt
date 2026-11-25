@@ -194,19 +194,39 @@ class MapHolder(ctx: Context) {
      */
     private fun addAerial(s: Style) {
         fun wms(base: String, layer: String) =
-            "$base?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=$layer&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE"
+            "$base?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=$layer&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE"
         val sources = listOf(
             Triple("aerial-th", wms("https://www.geoproxy.geoportal-th.de/geoproxy/services/DOP", "th_dop200rgb"), 17),
             Triple("aerial-st", wms("https://www.geodatenportal.sachsen-anhalt.de/wss/service/ST_LVermGeo_DOP_WMS_OpenData/guest", "lsa_lvermgeo_dop20_2"), 20),
             Triple("aerial-sn", wms("https://geodienste.sachsen.de/wms_geosn_dop-rgb/guest", "sn_dop_020"), 20),
         )
-        val below = s.layers.firstOrNull { it is SymbolLayer }?.id
+        // above every area and line of the base map (buildings, roads, water), below its labels:
+        // the base style interleaves labels early, so "below the first label" would leave buildings on top
+        val own = setOf("st-dot", "sel-ring", "st-name")
+        val base = s.layers.filter { it.id !in own }
+        val lastShape = base.lastOrNull { it !is SymbolLayer }?.id
+        var anchor = lastShape
         for ((id, url, maxZoom) in sources) {
             val ts = org.maplibre.android.style.sources.TileSet("2.2.0", url).apply { this.maxZoom = maxZoom.toFloat(); minZoom = 8f }
             s.addSource(org.maplibre.android.style.sources.RasterSource(id, ts, 256))
-            val layer = org.maplibre.android.style.layers.RasterLayer(id, id)
-            if (below != null) s.addLayerBelow(layer, below) else s.addLayerBelow(layer, "st-dot")
+            // 512 px images in 256 px tiles: sharp on high density screens; the photos are a bit flat, lift them
+            val layer = org.maplibre.android.style.layers.RasterLayer(id, id).withProperties(
+                rasterContrast(0.18f), rasterSaturation(0.25f), rasterFadeDuration(150f),
+            )
+            if (anchor != null) s.addLayerAbove(layer, anchor) else s.addLayerBelow(layer, "st-dot")
+            anchor = id
         }
+        // labels of the base map that sat between its shapes are now under the images: move them on top
+        // (same order, below the stops), so street and place names stay readable
+        for (l in base.filterIsInstance<SymbolLayer>()) {
+            if (base.indexOf(l) > base.indexOfFirst { it.id == lastShape }) continue
+            runCatching { s.removeLayer(l); s.addLayerBelow(l, "st-dot") }
+        }
+        // light text with a dark rim reads on any photo
+        for (l in base.filterIsInstance<SymbolLayer>()) runCatching {
+            l.setProperties(textColor("#FFFFFF"), textHaloColor("#000000"), textHaloWidth(1.4f))
+        }
+        (s.getLayer("st-name") as? SymbolLayer)?.setProperties(textColor("#FFFFFF"), textHaloColor("#000000"))
     }
 
     /** Draws a journey: transit legs in line colour, walking legs dashed, stops at the leg ends. */
@@ -410,12 +430,6 @@ fun MapScreen(nav: Nav) {
         if (sel != null) lastSel = sel
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomInset.current)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.Bottom) {
-                // required credit of the aerial images (open data licences)
-                if (mapSat) Text(
-                    "Luftbild © GeoSN, © GeoBasis-DE/LVermGeo LSA (dl-de/by-2-0), © GDI-Th (CC BY 4.0)",
-                    style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color.White, maxLines = 3,
-                    modifier = Modifier.weight(1f).background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp),
-                )
                 RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
                 RoundButton(if (mapSat) androidx.compose.material.icons.Icons.Rounded.Map else androidx.compose.material.icons.Icons.Rounded.SatelliteAlt,
                     if (mapSat) "Luftbild aus" else "Luftbild an", { app.prefs.toggleMapSat() })
