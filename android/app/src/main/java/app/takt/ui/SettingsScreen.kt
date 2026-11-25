@@ -146,7 +146,7 @@ fun SettingsScreen(nav: Nav) {
             }
             LaunchedEffect(Unit) { measure() }
             val used = cacheBytes?.let { sizeText(it) } ?: "…"
-            Text("Luftbilder und Kartenkacheln bleiben bis 5 GB auf dem Handy und werden nur einmal geladen. Belegt: $used",
+            Text("Luftbilder und Kartenkacheln bleiben bis 5 GB auf dem Handy und werden nur einmal geladen.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
             OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.padding(top = 6.dp)) { Text("Kartenspeicher leeren ($used)") }
             cacheMsg?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
