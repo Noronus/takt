@@ -28,6 +28,7 @@ data class ConfigExport(
     val token: String? = null,
     val animScale: Float? = null,
     val mapDark: Boolean? = null,
+    val mapSat: Boolean? = null,
     val pastMin: Int? = null,
     val favStations: List<String> = emptyList(),
     val favRoutes: List<FavRoute> = emptyList(),
@@ -87,6 +88,11 @@ class Prefs(ctx: Context) {
     val mapDark: StateFlow<Boolean> = _mapDark
     fun toggleMapDark() { _mapDark.value = !_mapDark.value; sp.edit().putBoolean("mapDark", _mapDark.value).apply() }
 
+    /** Aerial images on the map (kept across restarts). */
+    private val _mapSat = MutableStateFlow(sp.getBoolean("mapSat", false))
+    val mapSat: StateFlow<Boolean> = _mapSat
+    fun toggleMapSat() { _mapSat.value = !_mapSat.value; sp.edit().putBoolean("mapSat", _mapSat.value).commit() }
+
     private val _favStations = MutableStateFlow(sp.getString("favStations", "")!!.split('\n').filter { it.isNotBlank() })
     val favStations: StateFlow<List<String>> = _favStations
 
@@ -118,7 +124,7 @@ class Prefs(ctx: Context) {
 
     fun exportJson(withToken: Boolean): String = pretty.encodeToString(ConfigExport.serializer(), ConfigExport(
         server = server, token = if (withToken) token.ifBlank { null } else null,
-        animScale = animScale, mapDark = _mapDark.value, pastMin = pastMin,
+        animScale = animScale, mapDark = _mapDark.value, mapSat = _mapSat.value, pastMin = pastMin,
         favStations = _favStations.value, favRoutes = _favRoutes.value,
         preferred = _preferred.value, preferSlack = preferSlack, alertLines = _alertLines.value.toList(),
     ))
@@ -131,6 +137,7 @@ class Prefs(ctx: Context) {
         c.token?.takeIf { it.isNotBlank() }?.let { token = it }
         c.animScale?.let { animScale = it }
         c.mapDark?.let { if (it != _mapDark.value) toggleMapDark() }
+        c.mapSat?.let { if (it != _mapSat.value) toggleMapSat() }
         c.pastMin?.let { changePastMin(it) }
         c.preferSlack?.let { changePreferSlack(it) }
         val st = (_favStations.value + c.favStations).distinct()

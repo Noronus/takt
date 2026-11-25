@@ -3,6 +3,8 @@ package app.takt.ui
 import android.content.Context
 import android.graphics.RectF
 import android.view.ViewGroup
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.SatelliteAlt
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -86,6 +88,7 @@ class MapHolder(ctx: Context) {
     var map by mutableStateOf<MapLibreMap?>(null); private set
     var style by mutableStateOf<Style?>(null); private set
     private var styleDark: Boolean? = null
+    private var styleSat: Boolean? = null
     var onStationClick: (String?) -> Unit = {}
     private var stationsLoaded = false
     /** Map is shown once stations are in it (or after a timeout), so tiles and stops appear together. */
@@ -131,10 +134,11 @@ class MapHolder(ctx: Context) {
     /** Station data version currently in the map source. */
     var shownVersion: String? = null
 
-    fun applyStyle(dark: Boolean, geojson: String?) {
+    fun applyStyle(dark: Boolean, geojson: String?, sat: Boolean = false) {
         val m = map ?: return
-        if (styleDark == dark && style != null) return
+        if (styleDark == dark && styleSat == sat && style != null) return
         styleDark = dark
+        styleSat = sat
         style = null
         val st = TaktApp.instance.stations
         val fileVersion = st.geoFileVersion()
@@ -176,8 +180,33 @@ class MapHolder(ctx: Context) {
                 setFilter(any(eq(get("big"), 1), gte(zoom(), 15.5)))
             })
         TaktApp.mark("applyStyle geojson=${geojson != null} file=$fileVersion")
-        m.setStyle(b) { s -> style = s; TaktApp.mark("style loaded"); setRoute(MapRoute.itinerary) }
+        m.setStyle(b) { s ->
+            if (sat) addAerial(s)
+            style = s; TaktApp.mark("style loaded"); setRoute(MapRoute.itinerary)
+        }
         view.addOnDidFinishRenderingMapListener { full -> if (full) TaktApp.mark("map fully rendered") }
+    }
+
+    /**
+     * Aerial images from the open orthophotos of the three states of the MDV area, as WMS tiles.
+     * Each service is transparent outside its state, so they stack; outside all three the normal map shows.
+     * They go below the first label layer: street names and the stops stay readable on top.
+     */
+    private fun addAerial(s: Style) {
+        fun wms(base: String, layer: String) =
+            "$base?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=$layer&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256&FORMAT=image/png&TRANSPARENT=TRUE"
+        val sources = listOf(
+            Triple("aerial-th", wms("https://www.geoproxy.geoportal-th.de/geoproxy/services/DOP", "th_dop200rgb"), 17),
+            Triple("aerial-st", wms("https://www.geodatenportal.sachsen-anhalt.de/wss/service/ST_LVermGeo_DOP_WMS_OpenData/guest", "lsa_lvermgeo_dop20_2"), 20),
+            Triple("aerial-sn", wms("https://geodienste.sachsen.de/wms_geosn_dop-rgb/guest", "sn_dop_020"), 20),
+        )
+        val below = s.layers.firstOrNull { it is SymbolLayer }?.id
+        for ((id, url, maxZoom) in sources) {
+            val ts = org.maplibre.android.style.sources.TileSet("2.2.0", url).apply { this.maxZoom = maxZoom.toFloat(); minZoom = 8f }
+            s.addSource(org.maplibre.android.style.sources.RasterSource(id, ts, 256))
+            val layer = org.maplibre.android.style.layers.RasterLayer(id, id)
+            if (below != null) s.addLayerBelow(layer, below) else s.addLayerBelow(layer, "st-dot")
+        }
     }
 
     /** Draws a journey: transit legs in line colour, walking legs dashed, stops at the leg ends. */
@@ -312,6 +341,7 @@ fun MapScreen(nav: Nav) {
     val holder = LocalMapHolder.current
     val geojson by app.stations.geojson.collectAsState()
     val mapDark by app.prefs.mapDark.collectAsState()
+    val mapSat by app.prefs.mapSat.collectAsState()
     var permTick by remember { mutableIntStateOf(0) }
     val askPerm = rememberLocationPermission { permTick++ }
     val scope = rememberCoroutineScope()
@@ -337,10 +367,10 @@ fun MapScreen(nav: Nav) {
             MapSel.selected = st?.id
         }
     }
-    LaunchedEffect(holder.map, mapDark) {
+    LaunchedEffect(holder.map, mapDark, mapSat) {
         // wait briefly for the station data (normally ready within ~50 ms) so it is part of the first frame
         val g = geojson ?: kotlinx.coroutines.withTimeoutOrNull(400) { app.stations.geojson.filterNotNull().first() }
-        holder.applyStyle(mapDark, g)
+        holder.applyStyle(mapDark, g, mapSat)
     }
     LaunchedEffect(holder.style, geojson) { geojson?.let { holder.setStations(it, app.stations.version) } }
     LaunchedEffect(holder.style, MapSel.selected) { holder.setSelected(app.stations.get(MapSel.selected)) }
@@ -379,8 +409,16 @@ fun MapScreen(nav: Nav) {
         var lastSel by remember { mutableStateOf<Station?>(null) }
         if (sel != null) lastSel = sel
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomInset.current)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.Bottom) {
+                // required credit of the aerial images (open data licences)
+                if (mapSat) Text(
+                    "Luftbild © GeoSN, © GeoBasis-DE/LVermGeo LSA (dl-de/by-2-0), © GDI-Th (CC BY 4.0)",
+                    style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color.White, maxLines = 3,
+                    modifier = Modifier.weight(1f).background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp),
+                )
                 RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
+                RoundButton(if (mapSat) androidx.compose.material.icons.Icons.Rounded.Map else androidx.compose.material.icons.Icons.Rounded.SatelliteAlt,
+                    if (mapSat) "Luftbild aus" else "Luftbild an", { app.prefs.toggleMapSat() })
                 RoundButton(if (mapDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode, "Kartenstil wechseln", { app.prefs.toggleMapDark() })
                 RoundButton(Icons.Rounded.MyLocation, "Mein Standort", {
                     if (!app.loc.hasPermission()) askPerm()

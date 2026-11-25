@@ -168,7 +168,8 @@ fun SettingsScreen(nav: Nav) {
                     "Fahrplan und Echtzeit: DELFI e.V. über gtfs.de (CC BY 4.0, Echtzeit CC BY-SA 4.0).\n" +
                     "S-Bahn-/Regionalzug-Echtzeit und Störungsmeldungen: INSA / Nahverkehr Sachsen-Anhalt (inoffizielle Schnittstelle).\n" +
                     "Verbindungssuche: MOTIS (motis-project.de).\n" +
-                    "Karte: © OpenStreetMap-Mitwirkende (ODbL), Kacheln OpenFreeMap, MapLibre.\n\n" +
+                    "Karte: © OpenStreetMap-Mitwirkende (ODbL), Kacheln OpenFreeMap, MapLibre.\n" +
+                    "Luftbilder: © GeoSN, © GeoBasis-DE/LVermGeo LSA (dl-de/by-2-0), © GDI-Th (CC BY 4.0).\n\n" +
                     "Ohne Google-Dienste. Standort bleibt auf dem Gerät.",
                 fontSize = 13.sp,
             )
