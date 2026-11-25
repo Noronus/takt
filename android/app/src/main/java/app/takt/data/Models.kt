@@ -87,7 +87,11 @@ data class Leg(
 }
 
 @Serializable
-data class Itinerary(val id: String = "", val transfers: Int = 0, val duration: Long = 0, val legs: List<Leg> = emptyList())
+data class Itinerary(
+    val id: String = "", val transfers: Int = 0, val duration: Long = 0, val legs: List<Leg> = emptyList(),
+    /** Name of the preferred transfer stop this journey uses (server, "bevorzugte Umstiege"). */
+    val via: String? = null,
+)
 
 @Serializable
 data class PlanResponse(

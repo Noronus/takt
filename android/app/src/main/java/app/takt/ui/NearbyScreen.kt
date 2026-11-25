@@ -86,7 +86,7 @@ fun NearbyScreen(nav: Nav) {
         item {
             ScreenTitle("In der Nähe") {
                 IconButton(onClick = { scope.launch { refreshPosition() } }) { Icon(Icons.Rounded.MyLocation, "Standort aktualisieren") }
-                IconButton(onClick = nav::settings) { Icon(Icons.Rounded.Settings, "Einstellungen") }
+                SettingsButton(nav)
             }
         }
         item { SearchField(query, { query = it }, "Haltestelle suchen") }

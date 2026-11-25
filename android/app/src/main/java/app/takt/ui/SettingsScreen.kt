@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -83,6 +84,38 @@ fun SettingsScreen(nav: Nav) {
                 color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 8.dp))
 
             Spacer(Modifier.height(24.dp))
+            Text("Vergangene Fahrten", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                for (v in listOf(0, 2, 5, 10, 15)) androidx.compose.material3.FilterChip(
+                    selected = app.prefs.pastMin == v, onClick = { app.prefs.changePastMin(v) }, label = { Text(if (v == 0) "Aus" else "$v min") },
+                )
+            }
+            Text("So lange bleiben abgefahrene Fahrten in den Abfahrtslisten stehen.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+
+            Spacer(Modifier.height(24.dp))
+            Text("Bevorzugte Umstiege", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            val preferred by app.prefs.preferred.collectAsState()
+            var pickPreferred by remember { mutableStateOf(false) }
+            for (p in preferred) Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(shortName(p.name), modifier = Modifier.weight(1f))
+                IconButton(onClick = { app.prefs.setPreferred(preferred - p) }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Entfernen") }
+            }
+            if (preferred.size < 3) OutlinedButton(onClick = { pickPreferred = true }, modifier = Modifier.padding(top = 4.dp)) { Text("Haltestelle hinzufügen") }
+            Text("Höchstens so viel länger unterwegs:", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                for (v in listOf(2, 5, 10, 15)) androidx.compose.material3.FilterChip(
+                    selected = app.prefs.preferSlack == v, onClick = { app.prefs.changePreferSlack(v) }, label = { Text("$v min") },
+                )
+            }
+            Text("Verbindungen mit Umstieg an diesen Haltestellen werden vorgezogen, solange sie nicht mehr als die gewählte Zeit kosten. Direkte Verbindungen bleiben immer.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+            if (pickPreferred) PlacePicker("Bevorzugter Umstieg", onDismiss = { pickPreferred = false }) { p ->
+                pickPreferred = false
+                if (p.station != null && preferred.none { it.station == p.station }) app.prefs.setPreferred(preferred + p)
+                else if (p.station == null) status = "Bitte eine Haltestelle wählen, keine Adresse."
+            }
+
+            Spacer(Modifier.height(24.dp))
             Text("Animationen", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                 for ((v, label) in Anim.options) androidx.compose.material3.FilterChip(
@@ -90,6 +123,35 @@ fun SettingsScreen(nav: Nav) {
                 )
             }
             Text("Gilt für Panels, Listen und Kamerafahrten der Karte.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+
+            Spacer(Modifier.height(24.dp))
+            Text("Sichern", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            var withToken by remember { mutableStateOf(false) }
+            var backupMsg by remember { mutableStateOf<String?>(null) }
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+                if (uri != null) backupMsg = runCatching {
+                    ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(app.prefs.exportJson(withToken).toByteArray()) }
+                    "Exportiert" + if (withToken) " (mit Token – Datei privat halten)" else ""
+                }.getOrElse { "Export fehlgeschlagen: ${it.message}" }
+            }
+            val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) backupMsg = runCatching {
+                    val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }
+                    app.prefs.importJson(text).also { server = app.prefs.server; token = app.prefs.token; Anim.set(app.prefs.animScale) }
+                }.getOrElse { "Import fehlgeschlagen: ${it.message}" }
+            }
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Checkbox(withToken, { withToken = it })
+                Text("Token mit exportieren", fontSize = 14.sp)
+            }
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { exportLauncher.launch("takt-einstellungen.json") }) { Text("Exportieren") }
+                OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) { Text("Importieren") }
+            }
+            Text("Favoriten, gemerkte Routen, bevorzugte Umstiege und Einstellungen. Beim Import werden Favoriten ergänzt.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+            backupMsg?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp)) }
 
             Spacer(Modifier.height(24.dp))
             Text("Info", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)

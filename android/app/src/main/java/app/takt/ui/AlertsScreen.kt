@@ -17,6 +17,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -63,14 +67,46 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
     }
     PullToRefreshBox(isRefreshing = live.loading && live.data != null, onRefresh = load, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         val nq = Stations.norm(q)
-        val list = live.data?.value?.alerts.orEmpty().filter { a ->
-            nq.isBlank() || Stations.norm("${a.title} ${a.text} ${a.company} ${a.lines.joinToString(" ")} ${a.stops.joinToString(" ")}").contains(nq)
+        val picked by app.prefs.alertLines.collectAsState()
+        val all = live.data?.value?.alerts.orEmpty()
+        // every line that has a message, trams first, then S-Bahn, buses, the rest; numbers in numeric order
+        val lines = all.flatMap { it.lines }.distinct().sortedWith(compareBy<String>({ lineRank(it) }, { lineLabel(it).filter(Char::isDigit).toIntOrNull() ?: 9999 }, { it }))
+        val list = all.filter { a ->
+            (picked.isEmpty() || a.lines.any { it in picked }) &&
+                (nq.isBlank() || Stations.norm("${a.title} ${a.text} ${a.company} ${a.lines.joinToString(" ")} ${a.stops.joinToString(" ")}").contains(nq))
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
-            item { ScreenTitle("Störungen") }
+            item { ScreenTitle("Störungen") { SettingsButton(nav) } }
             item { Row(Modifier.padding(horizontal = 20.dp)) { AgeChip(live.data, live.loading, live.error) } }
             item { ErrorLine(live.error) }
             item { SearchField(q, { q = it }, "Linie, Haltestelle, Stichwort") }
+            if (lines.isNotEmpty() || picked.isNotEmpty()) item {
+                var menu by remember { mutableStateOf(false) }
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    val label = if (picked.isEmpty()) "Alle Linien" else "Linien: " + picked.map(::lineLabel).sorted().joinToString(", ")
+                    androidx.compose.material3.FilterChip(
+                        selected = picked.isNotEmpty(), onClick = { menu = true },
+                        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        trailingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.ArrowDropDown, null) },
+                    )
+                    // stays open while ticking lines; tap outside or back closes it
+                    androidx.compose.material3.DropdownMenu(menu, { menu = false }, Modifier.heightIn(max = 420.dp)) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Alle Linien") },
+                            leadingIcon = { androidx.compose.material3.Checkbox(picked.isEmpty(), null) },
+                            onClick = { app.prefs.setAlertLines(emptySet()) },
+                        )
+                        androidx.compose.material3.HorizontalDivider()
+                        // picked lines without a message right now stay in the list, so they can be unticked
+                        for (l in picked.filter { it !in lines }.sorted() + lines) androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(lineLabel(l)) },
+                            leadingIcon = { androidx.compose.material3.Checkbox(l in picked, null) },
+                            trailingIcon = { androidx.compose.material3.Icon(modeIcon(lineMode(l)), null, modifier = Modifier.size(18.dp)) },
+                            onClick = { app.prefs.setAlertLines(if (l in picked) picked - l else picked + l) },
+                        )
+                    }
+                }
+            }
             if (list.isEmpty() && live.data != null) item { Text("Keine Meldungen.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(list, key = { it.id }) { a ->
                 val accent = if (a.products.any { it == "tram" || it == "suburban" || it == "regional" }) Palette.tram else Palette.warn
@@ -84,8 +120,7 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
                         Column(Modifier.padding(14.dp)) {
                             if (a.lines.isNotEmpty()) Row {
                                 for (l in a.lines.take(6)) {
-                                    val mode = when { l.startsWith("Bus") -> "bus"; l.startsWith("Str") -> "tram"; l.startsWith("S") -> "sbahn"; else -> "train" }
-                                    LineBadge(l.removePrefix("Bus ").removePrefix("Str "), mode, small = true)
+                                    LineBadge(lineLabel(l), lineMode(l), small = true)
                                     Spacer(Modifier.width(4.dp))
                                 }
                             }
@@ -107,6 +142,10 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
         }
     }
 }
+
+private fun lineMode(l: String) = when { l.startsWith("Bus") -> "bus"; l.startsWith("Str") -> "tram"; l.startsWith("S") -> "sbahn"; else -> "train" }
+private fun lineLabel(l: String) = l.removePrefix("Bus ").removePrefix("Str ")
+private fun lineRank(l: String) = when (lineMode(l)) { "tram" -> 0; "sbahn" -> 1; "bus" -> 2; else -> 3 }
 
 private fun validity(from: String?, until: String?): String {
     fun d(s: String?) = s?.take(10)?.split('-')?.let { if (it.size == 3) "${it[2]}.${it[1]}.${it[0].takeLast(2)}" else null }

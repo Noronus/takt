@@ -9,7 +9,7 @@ import java.io.File
  * Loads live data and keeps the last answer per station on disk, so a station opens instantly
  * (marked with its age) and still shows something without network.
  */
-class Repo(ctx: Context, private val api: Api) {
+class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
     private val dir = File(ctx.cacheDir, "deps").apply { mkdirs() }
     private val mem = HashMap<String, Timed<DeparturesResponse>>()
 
@@ -27,7 +27,10 @@ class Repo(ctx: Context, private val api: Api) {
     }
 
     suspend fun departures(station: String, n: Int = 40): Timed<DeparturesResponse> {
-        val (body, _) = api.get("/api/v1/departures", mapOf("station" to station, "n" to n.toString()))
+        // start the list earlier when departures of the last minutes should stay visible
+        val past = prefs.pastMin
+        val from = if (past > 0) (System.currentTimeMillis() / 1000 - past * 60L).toString() else null
+        val (body, _) = api.get("/api/v1/departures", mapOf("station" to station, "n" to n.toString(), "time" to from))
         val now = System.currentTimeMillis()
         val r = withContext(Dispatchers.Default) { api.json.decodeFromString(DeparturesResponse.serializer(), body ?: throw ApiException("leere Antwort")) }
         val t = Timed(r, now, if (r.source == "motis") r.rt.feedAge else 0)
@@ -40,6 +43,8 @@ class Repo(ctx: Context, private val api: Api) {
         val r: PlanResponse = api.getJson("/api/v1/plan", mapOf(
             "from" to from, "to" to to, "time" to time?.toString(),
             "arriveBy" to if (arriveBy) "1" else null, "cursor" to cursor,
+            "prefer" to prefs.preferred.value.mapNotNull { it.station }.take(3).joinToString(",").ifBlank { null },
+            "slack" to if (prefs.preferred.value.isNotEmpty()) prefs.preferSlack.toString() else null,
         ), attempts = 2)
         return Timed(r, System.currentTimeMillis(), r.rt.feedAge)
     }

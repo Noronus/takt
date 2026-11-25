@@ -3,6 +3,7 @@ package app.takt.ui
 import android.content.Context
 import android.graphics.RectF
 import android.view.ViewGroup
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -285,8 +286,13 @@ class MapHolder(ctx: Context) {
 
 val LocalMapHolder = staticCompositionLocalOf<MapHolder> { error("no map") }
 
-/** Journey shown on the map ("Auf Karte zeigen"). */
-object MapRoute { var itinerary by mutableStateOf<app.takt.data.Itinerary?>(null) }
+/** Journey shown on the map ("Auf Karte zeigen"). Saved like the journey fields. */
+object MapRoute {
+    private var _it by mutableStateOf(TaktApp.instance.prefs.loadRoute())
+    var itinerary: app.takt.data.Itinerary?
+        get() = _it
+        set(v) { _it = v; TaktApp.instance.prefs.saveRoute(v) }
+}
 
 private fun modeHex(m: String) = when (m) {
     "tram" -> "#E5243B"; "bus" -> "#8E4FD1"; "sbahn" -> "#17A35B"; "train" -> "#64748B"; "walk" -> "#94A3B8"; else -> "#475569"
@@ -311,7 +317,15 @@ fun MapScreen(nav: Nav) {
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf<Int?>(null) }
 
-    // back closes the station panel first
+    // back on the map: hide the shown route, then empty the fields, then the app closes.
+    // After a jump (e.g. "Auf Karte zeigen") back returns to where it came from instead.
+    androidx.activity.compose.BackHandler(
+        enabled = !nav.canReturn && (MapRoute.itinerary != null || JourneyState.from != null || JourneyState.to != null),
+    ) {
+        if (MapRoute.itinerary != null) MapRoute.itinerary = null
+        else { clearJourney(); MapSel.prevFrom = null }
+    }
+    // back closes the station panel first (registered last, so it wins)
     androidx.activity.compose.BackHandler(enabled = MapSel.selected != null) { MapSel.selected = null }
     SideEffect {
         holder.onStationClick = { id ->
@@ -366,6 +380,7 @@ fun MapScreen(nav: Nav) {
         if (sel != null) lastSel = sel
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomInset.current)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+                RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
                 RoundButton(if (mapDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode, "Kartenstil wechseln", { app.prefs.toggleMapDark() })
                 RoundButton(Icons.Rounded.MyLocation, "Mein Standort", {
                     if (!app.loc.hasPermission()) askPerm()
@@ -386,6 +401,7 @@ fun MapScreen(nav: Nav) {
                     fromHint = "Haltestelle antippen", toHint = "Wohin?",
                     onFrom = { picking = 0 }, onTo = { picking = 1 },
                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp),
+                    onClear = { clearJourney(); MapSel.prevFrom = null },
                 )
                 androidx.compose.animation.AnimatedVisibility(visible = sel != null, enter = slideInVertically(Anim.offset(260)) { it }, exit = slideOutVertically(Anim.offset(220)) { it }) {
                     val shown = sel ?: lastSel
@@ -449,7 +465,9 @@ private fun StationPanel(s: Station, nav: Nav, onClose: () -> Unit, onPickDest: 
             if (deps.isEmpty() && live.data == null) Spacer(Modifier.height(284.dp))
             deps.forEachIndexed { i, d ->
                 if (i > 0) RowDivider(70.dp)
-                DepartureRow(d, now, onClick = { nav.station(s.id) })
+                DepartureRow(d, now, onClick = {
+                    if (d.trip.isNotBlank() && live.data?.value?.source != "insa") nav.trip(d.trip, d.line) else nav.station(s.id)
+                })
             }
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 PillButton("Ziel wählen", Icons.Rounded.Search, primary = true, onClick = onPickDest, modifier = Modifier.weight(1f))

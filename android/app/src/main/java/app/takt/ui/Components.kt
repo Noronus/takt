@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -208,13 +209,14 @@ fun DelayChip(planned: Long, real: Long?, cancelled: Boolean, hasRt: Boolean) {
     Text(txt, color = c, style = MaterialTheme.typography.labelMedium.merge(Tnum))
 }
 
-/** Big countdown: "4 min", "jetzt", or a clock time for later departures. */
+/** Big countdown: "weg" (gone), "jetzt", "4 min", or a clock time for later departures. */
 @Composable
 fun Countdown(epochS: Long, nowS: Long, cancelled: Boolean) {
     val m = Math.floorDiv(epochS - nowS, 60L)
     val strike = if (cancelled) TextDecoration.LineThrough else null
     val color = if (cancelled) Palette.bad else MaterialTheme.colorScheme.onSurface
     when {
+        m < -1 -> Text("weg", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline, textDecoration = strike)
         m <= 0 -> Text("jetzt", style = MaterialTheme.typography.titleLarge, color = if (cancelled) color else MaterialTheme.colorScheme.primary, textDecoration = strike)
         m < 60 -> Text(buildAnnotatedString {
             append("$m")
@@ -315,6 +317,7 @@ fun SearchField(value: String, onChange: (String) -> Unit, placeholder: String, 
 fun RouteCard(
     from: String?, to: String?, fromHint: String, toHint: String,
     onFrom: () -> Unit, onTo: () -> Unit, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {},
+    onClear: (() -> Unit)? = null,
 ) {
     Surface(modifier, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -325,6 +328,11 @@ fun RouteCard(
                 RouteLine(false, to, toHint, onTo)
             }
             trailing()
+            if (onClear != null && (from != null || to != null)) {
+                androidx.compose.material3.IconButton(onClick = onClear) {
+                    Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Felder leeren", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
@@ -377,4 +385,16 @@ fun placeName(n: String, first: Boolean): String = when {
 }
 
 /** Drops departures that already left (matters when showing cached data). */
-fun upcoming(deps: List<Dep>, nowS: Long): List<Dep> = deps.filter { (it.rt ?: it.t) >= nowS - 30 }
+/** Departures still to come, plus those that left within the "vergangene Fahrten" setting. */
+fun upcoming(deps: List<Dep>, nowS: Long): List<Dep> {
+    val keep = maxOf(30L, app.takt.TaktApp.instance.prefs.pastMin * 60L)
+    return deps.filter { (it.rt ?: it.t) >= nowS - keep }
+}
+
+/** Settings gear, top right on every main screen. */
+@Composable
+fun SettingsButton(nav: Nav) {
+    androidx.compose.material3.IconButton(onClick = nav::settings) {
+        Icon(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen")
+    }
+}

@@ -181,19 +181,29 @@ function unixTime(v: string | undefined): Date | undefined | null {
   return Math.abs(t - Date.now()) <= 60 * 86400_000 ? new Date(t) : null
 }
 
+// feed timestamp of the realtime data MOTIS last fetched, per dataset. MOTIS polls on its own
+// schedule, so its data can be older than ours; departures and journeys come from MOTIS.
+const motisFeed: Record<string, number> = {}
 app.get('/rt/:tag.pb', async (req, reply) => {
-  const pb = rt.pb[(req.params as any).tag]
+  const tag = (req.params as any).tag
+  const pb = rt.pb[tag]
   if (!pb) return reply.code(404).send()
+  motisFeed[tag] = rt.feedTimestamp
   return reply.type('application/x-protobuf').send(Buffer.from(pb))
 })
 
 const here = dirname(fileURLToPath(import.meta.url))
 app.get('/icon.png', async (_req, reply) => reply.type('image/png').send(await readFile(join(here, 'icon.png'))))
 
-const rtInfo = () => ({
-  feedAge: rt.feedTimestamp ? Math.round(Date.now() / 1000 - rt.feedTimestamp) : null,
-  fetchedAt: rt.fetchedAt ? Math.round(rt.fetchedAt / 1000) : null,
-})
+const rtInfo = () => {
+  // the oldest feed MOTIS works with; until MOTIS has fetched once after a restart, our own feed
+  const ts = Object.values(motisFeed).filter(Boolean)
+  const feed = ts.length ? Math.min(...ts) : rt.feedTimestamp
+  return {
+    feedAge: feed ? Math.round(Date.now() / 1000 - feed) : null,
+    fetchedAt: rt.fetchedAt ? Math.round(rt.fetchedAt / 1000) : null,
+  }
+}
 
 app.get('/api/v1/status', async req => {
   const motisState = await motis('/api/v1/health', {}, 3000).then(() => 'ok', (e: any) => e.message)
@@ -301,6 +311,79 @@ function mapLeg(l: any) {
   }
 }
 
+type Itin = { id: string, transfers: number, duration: number, legs: ReturnType<typeof mapLeg>[], via?: string }
+
+function toItinerary(it: any): Itin {
+  const legs = it.legs.map(mapLeg)
+  let fixed = false
+  for (const l of legs) {
+    // the feed sometimes has a large delay at one stop and a small one at the next, which makes
+    // a 10 min ride take 0 min; keep the departure delay for the whole leg instead
+    const plannedRide = (l.to.t ?? 0) - (l.from.t ?? 0)
+    if (l.mode !== 'walk' && l.from.rt != null && l.to.rt != null && plannedRide > 0 && l.to.rt - l.from.rt < plannedRide / 2) {
+      l.to.rt = l.from.rt + plannedRide
+      fixed = true
+    }
+  }
+  const first = legs[0], last = legs[legs.length - 1]
+  const duration = fixed && first && last ? (last.to.rt ?? last.to.t)! - (first.from.rt ?? first.from.t)! : it.duration
+  return { id: it.id, transfers: it.transfers, duration, legs }
+}
+
+const itStart = (it: Itin) => { const l = it.legs[0]; return (l?.from.rt ?? l?.from.t) ?? 0 }
+const itEnd = (it: Itin) => { const l = it.legs[it.legs.length - 1]; return (l?.to.rt ?? l?.to.t) ?? 0 }
+const itSig = (it: Itin) => it.legs.map(l => `${l.mode}:${l.trip}:${l.from.t}`).join('|')
+// stations where this journey changes vehicles
+function transferStations(it: Itin): Set<string> {
+  const t = it.legs.filter(l => l.mode !== 'walk')
+  const s = new Set<string>()
+  t.forEach((l, i) => { if (i > 0 && l.from.station) s.add(l.from.station); if (i < t.length - 1 && l.to.station) s.add(l.to.station) })
+  return s
+}
+
+// "Bevorzugte Umstiege": a journey that has to change is replaced by one changing at a preferred stop,
+// if that has no more changes and costs at most `slack` minutes (later arrival + earlier departure).
+async function preferTransfers(its: Itin[], q: Record<string, string>, fromPlace: string, toPlace: string, time: Date | undefined): Promise<Itin[]> {
+  const prefer = (typeof q.prefer === 'string' ? q.prefer.split(',') : []).map(id => stations.get(id)).filter((s): s is Station => !!s).slice(0, 3)
+  if (!prefer.length || !its.some(it => it.transfers > 0)) return its
+  const slack = Math.min(30, Math.max(0, Number(q.slack) || 5)) * 60
+  const preferIds = new Set(prefer.map(s => s.id))
+  const arriveBy = q.arriveBy === '1' || q.arriveBy === 'true'
+  // the window of this page: from its first departure (or up to its last arrival)
+  const t0 = arriveBy ? Math.max(...its.map(itEnd)) : Math.min(...its.map(itStart))
+  const candidates: Itin[] = []
+  for (const st of prefer) {
+    if ([fromPlace, toPlace].includes(st.stopIds[0])) continue
+    const r = await limited(config.maxPlans, () => motis('/api/v6/plan', {
+      fromPlace, toPlace, via: st.stopIds[0], time: new Date((t0 || (time ? time.getTime() / 1000 : Date.now() / 1000)) * 1000).toISOString(),
+      arriveBy, detailedTransfers: true, joinInterlinedLegs: true, maxMatchingDistance: 250, language: 'de', numItineraries: 6,
+    }, 10000)).catch(() => null)
+    if (!r || r === 'busy') continue
+    for (const v of (r.itineraries || []).map(toItinerary) as Itin[]) {
+      if (v.legs.some(l => l.cancelled) || ![...transferStations(v)].some(id => preferIds.has(id))) continue
+      candidates.push({ ...v, via: st.name })
+    }
+  }
+  const out: Itin[] = []
+  const seen = new Set<string>()
+  for (const n of its) {
+    const already = [...transferStations(n)].find(id => preferIds.has(id))
+    let pick: Itin = already ? { ...n, via: stations.get(already)?.name } : n
+    if (!already && n.transfers > 0) {
+      let best: Itin | undefined, bestCost = Infinity
+      for (const v of candidates) {
+        if (v.transfers > n.transfers) continue
+        const cost = Math.max(0, itEnd(v) - itEnd(n)) + Math.max(0, itStart(n) - itStart(v))
+        if (cost <= slack && cost < bestCost) { best = v; bestCost = cost }
+      }
+      if (best) pick = best
+    }
+    const k = itSig(pick)
+    if (!seen.has(k)) { seen.add(k); out.push(pick) }
+  }
+  return out
+}
+
 app.get('/api/v1/plan', async (req, reply) => {
   const q = req.query as Record<string, string>
   if (!q.from || !q.to) return reply.code(400).send({ error: 'from und to fehlen' })
@@ -319,10 +402,8 @@ app.get('/api/v1/plan', async (req, reply) => {
       maxMatchingDistance: 250, language: 'de', numItineraries: 6,
     }, 15000))
     if (r === 'busy') return reply.code(503).header('retry-after', '3').send({ error: 'Server ausgelastet, gleich nochmal versuchen' })
-    const its = (r.itineraries || []).map((it: any) => ({
-      id: it.id, transfers: it.transfers, duration: it.duration,
-      legs: it.legs.map(mapLeg),
-    }))
+    let its = (r.itineraries || []).map(toItinerary)
+    its = await preferTransfers(its, q, fromPlace, toPlace, time)
     // INSA realtime for rail legs (DELFI has none for DB Regio/S-Bahn)
     if (config.insaEnabled) {
       const jobs: Promise<void>[] = []

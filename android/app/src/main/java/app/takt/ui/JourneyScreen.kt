@@ -1,7 +1,5 @@
 package app.takt.ui
 
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -20,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -46,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -79,16 +80,40 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.Calendar
 
 private object PlanState {
     var time by mutableStateOf<Long?>(null)   // null = now
     var arriveBy by mutableStateOf(false)
-    var result by mutableStateOf<Timed<PlanResponse>?>(null)
+    var result by mutableStateOf<Timed<PlanResponse>?>(null)   // all loaded pages merged
     var resultKey by mutableStateOf("")
+    /** Loaded pages, top to bottom: cursor (null = first search) and answer. The auto refresh reloads all of them. */
+    var cursors: List<String?> = listOf(null)
+    var pages: List<Timed<PlanResponse>> = emptyList()
+    var loadingMore by mutableIntStateOf(0)    // -1 earlier, 1 later
     var expanded by mutableStateOf<String?>(null)
+}
+
+private const val MAX_PAGES = 6
+
+/** Empties start, destination and the results (✕ on map and journey tab, back on the map). */
+fun clearJourney() {
+    JourneyState.from = null; JourneyState.to = null
+    PlanState.result = null; PlanState.resultKey = ""; PlanState.cursors = listOf(null); PlanState.pages = emptyList(); PlanState.expanded = null
+}
+
+/** Same journey on two pages (pages overlap a little). */
+private fun sig(it: Itinerary) = it.legs.joinToString("|") { l -> "${l.mode}:${l.trip}:${l.from.t}" }
+
+/** One list from all pages; its age is that of the oldest page. */
+private fun merge(pages: List<Timed<PlanResponse>>): Timed<PlanResponse> {
+    val seen = HashSet<String>()
+    val its = pages.flatMap { it.value.itineraries }.filter { seen.add(sig(it)) }
+    val oldest = pages.maxBy { it.ageSeconds() }
+    val v = pages.first().value.copy(prev = pages.first().value.prev, next = pages.last().value.next, itineraries = its)
+    return Timed(v, oldest.receivedAtMs, oldest.feedAgeAtReceive)
 }
 
 @Composable
@@ -98,23 +123,71 @@ fun JourneyScreen(nav: Nav) {
     val live = remember { Live<PlanResponse>().also { it.data = PlanState.result } }
     var picking by remember { mutableStateOf<Int?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var timeDialog by remember { mutableStateOf(false) }
     val favRoutes by app.prefs.favRoutes.collectAsState()
-    val ctx = LocalContext.current
+    val listState = rememberLazyListState()
 
-    fun search(cursor: String? = null) {
-        val f = JourneyState.from ?: return
-        val t = JourneyState.to ?: return
+    fun run(block: suspend () -> Unit) {
         job?.cancel()
         job = scope.launch {
             live.loading = true
-            try {
-                val r = app.repo.plan(f.param(), t.param(), PlanState.time, PlanState.arriveBy, cursor)
-                live.data = r; live.error = null
-                PlanState.result = r
-                PlanState.resultKey = "${f.param()}>${t.param()}"
-            } catch (e: CancellationException) { throw e } catch (e: Exception) {
+            try { block(); live.error = null } catch (e: CancellationException) { throw e } catch (e: Exception) {
                 live.error = e.message
-            } finally { live.loading = false }
+            } finally { live.loading = false; PlanState.loadingMore = 0 }
+        }
+    }
+    fun show(pages: List<Timed<PlanResponse>>, cursors: List<String?>, key: String) {
+        PlanState.pages = pages; PlanState.cursors = cursors
+        val m = merge(pages)
+        live.data = m; PlanState.result = m; PlanState.resultKey = key
+    }
+    fun plan(f: SavedPlace, t: SavedPlace, c: String?) = suspend { app.repo.plan(f.param(), t.param(), PlanState.time, PlanState.arriveBy, c) }
+    /** Loads the given pages again (refresh) or a new search ([null]). */
+    fun load(cursors: List<String?>) {
+        val f = JourneyState.from ?: return
+        val t = JourneyState.to ?: return
+        run { show(cursors.map { c -> plan(f, t, c)() }, cursors, "${f.param()}>${t.param()}") }
+    }
+    fun search() = load(listOf(null))
+    /** Früher/Später: adds a page above or below and keeps the visible connections where they are. */
+    fun more(earlier: Boolean) {
+        val f = JourneyState.from ?: return
+        val t = JourneyState.to ?: return
+        val res = live.data?.value ?: return
+        val c = (if (earlier) res.prev else res.next) ?: return
+        val pages = PlanState.pages.ifEmpty { listOfNotNull(live.data) }
+        val cursors = if (PlanState.pages.isEmpty()) listOf<String?>(null) else PlanState.cursors
+        // first visible connection and its offset, to put it back after the list grew above it
+        val anchor = listState.layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String)?.startsWith("it:") == true }
+        PlanState.loadingMore = if (earlier) -1 else 1
+        run {
+            val p = plan(f, t, c)()
+            var ps = if (earlier) listOf(p) + pages else pages + p
+            var cs = if (earlier) listOf(c) + cursors else cursors + c
+            // keep the refresh cheap: drop the page farthest from the new one
+            if (ps.size > MAX_PAGES) { if (earlier) { ps = ps.dropLast(1); cs = cs.dropLast(1) } else { ps = ps.drop(1); cs = cs.drop(1) } }
+            val hadPrev = res.prev != null
+            val countBefore = listState.layoutInfo.totalItemsCount
+            show(ps, cs, PlanState.resultKey)
+            // scroll only once the list has been measured with the new items
+            if (earlier && anchor != null) kotlinx.coroutines.withTimeoutOrNull(1500) {
+                androidx.compose.runtime.snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it != countBefore }
+            }
+            if (earlier && anchor != null) {
+                val key = anchor.key as String
+                val its = live.data!!.value.itineraries
+                val newPos = its.indexOfFirst { "it:" + sig(it) == key }
+                val oldPos = res.itineraries.indexOfFirst { "it:" + sig(it) == key }
+                if (newPos >= 0 && oldPos >= 0) {
+                    val button = (if (live.data!!.value.prev != null) 1 else 0) - (if (hadPrev) 1 else 0)
+                    listState.scrollToItem((anchor.index + newPos - oldPos + button).coerceAtLeast(0))
+                    // then put the remembered connection exactly where it was
+                    androidx.compose.runtime.withFrameNanos { }
+                    val now = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
+                    if (now != null) listState.scrollBy((now.offset - anchor.offset).toFloat())
+                    else listState.scrollBy(-anchor.offset.toFloat())
+                }
+            }
         }
     }
 
@@ -124,9 +197,12 @@ fun JourneyScreen(nav: Nav) {
     }
     LaunchedEffect(Unit) {
         while (true) {
+            // results older than 30 s (e.g. back from another tab) are refreshed right away, then every 30 s;
+            // while the server's data itself is old, more often until it catches up. All loaded pages stay.
+            val age = live.data?.let { (System.currentTimeMillis() - it.receivedAtMs) / 1000 } ?: 0
             val stale = (live.data?.ageSeconds() ?: 0) > 90
-            delay(if (stale) 6_000 else 30_000)
-            if (PlanState.time == null && live.data != null && !live.loading) search()
+            if (PlanState.time == null && live.data != null && !live.loading && (age >= 30 || stale && age >= 6)) load(PlanState.cursors)
+            delay(if (stale) 6_000 else 3_000)
         }
     }
 
@@ -135,7 +211,7 @@ fun JourneyScreen(nav: Nav) {
     val guidedState by app.guide.active.collectAsState()
     @Suppress("UNUSED_VARIABLE") val g0 = guidedState
     val nowS = nowMs() / 1000
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = listState, contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
         item {
             ScreenTitle("Route") {
                 if (f != null && t != null) {
@@ -144,6 +220,7 @@ fun JourneyScreen(nav: Nav) {
                         Icon(if (fav) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Route merken", tint = if (fav) Palette.warn else MaterialTheme.colorScheme.onSurface)
                     }
                 }
+                SettingsButton(nav)
             }
         }
         item { GuideBanner(nav, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) }
@@ -158,23 +235,13 @@ fun JourneyScreen(nav: Nav) {
                         Icon(Icons.Rounded.SwapVert, "Tauschen")
                     }
                 },
+                onClear = { job?.cancel(); clearJourney(); live.data = null; live.error = null },
             )
         }
         item {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Segmented(listOf("Ab", "An"), if (PlanState.arriveBy) 1 else 0) { PlanState.arriveBy = it == 1; search() }
-                PillButton(
-                    PlanState.time?.let { dayTime(it) } ?: "Jetzt", Icons.Rounded.Schedule, primary = false,
-                    onClick = {
-                        val c = Calendar.getInstance().apply { PlanState.time?.let { timeInMillis = it * 1000 } }
-                        DatePickerDialog(ctx, { _, y, mo, d ->
-                            TimePickerDialog(ctx, { _, h, mi ->
-                                PlanState.time = LocalDateTime.of(y, mo + 1, d, h, mi).atZone(ZoneId.systemDefault()).toEpochSecond()
-                                search()
-                            }, c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), true).show()
-                        }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
-                    },
-                )
+                PillButton(PlanState.time?.let { dayTime(it) } ?: "Jetzt", Icons.Rounded.Schedule, primary = false, onClick = { timeDialog = true })
                 if (PlanState.time != null) TextButton(onClick = { PlanState.time = null; search() }) { Text("Jetzt") }
             }
         }
@@ -216,14 +283,15 @@ fun JourneyScreen(nav: Nav) {
                     Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
         } else {
-            if (res.prev != null) item { Centered("Früher") { search(res.prev) } }
+            if (res.prev != null) item(key = "earlier") { Centered(if (PlanState.loadingMore == -1) "lädt …" else "Früher") { more(true) } }
             if (res.itineraries.isEmpty()) item { Text("Keine Verbindung gefunden.", Modifier.padding(20.dp)) }
-            items(res.itineraries, key = { it.id.ifBlank { it.hashCode().toString() } }) { iti ->
-                ItineraryCard(iti, nowS, expanded = PlanState.expanded == iti.id, nav = nav) {
-                    PlanState.expanded = if (PlanState.expanded == iti.id) null else iti.id
+            items(res.itineraries, key = { "it:" + sig(it) }) { iti ->
+                val k = sig(iti)
+                ItineraryCard(iti, nowS, expanded = PlanState.expanded == k, nav = nav) {
+                    PlanState.expanded = if (PlanState.expanded == k) null else k
                 }
             }
-            if (res.next != null) item { Centered("Später") { search(res.next) } }
+            if (res.next != null) item(key = "later") { Centered(if (PlanState.loadingMore == 1) "lädt …" else "Später") { more(false) } }
         }
     }
 
@@ -233,6 +301,47 @@ fun JourneyScreen(nav: Nav) {
             onDismiss = { picking = null },
             onPick = { p -> if (which == 0) JourneyState.from = p else JourneyState.to = p; picking = null },
         )
+    }
+    if (timeDialog) TimeDialog(PlanState.time, onDismiss = { timeDialog = false }) { t ->
+        timeDialog = false
+        PlanState.time = t
+        search()
+    }
+}
+
+/** Date and time in the app's own look: day chips and the Material clock, 24 h. null = now. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeDialog(current: Long?, onDismiss: () -> Unit, onPick: (Long?) -> Unit) {
+    val zone = ZoneId.systemDefault()
+    val start = current?.let { java.time.Instant.ofEpochSecond(it).atZone(zone).toLocalDateTime() } ?: LocalDateTime.now()
+    val today = java.time.LocalDate.now()
+    var day by remember { mutableStateOf(start.toLocalDate().let { if (it.isBefore(today)) today else it }) }
+    val state = androidx.compose.material3.rememberTimePickerState(start.hour, start.minute, is24Hour = true)
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Column(Modifier.padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Abfahrtszeit", style = MaterialTheme.typography.titleLarge, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp))
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items((0L..13L).map { today.plusDays(it) }) { d ->
+                        val label = when (d) {
+                            today -> "Heute"; today.plusDays(1) -> "Morgen"
+                            else -> d.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.GERMAN).removeSuffix(".") + " %02d.%02d.".format(d.dayOfMonth, d.monthValue)
+                        }
+                        androidx.compose.material3.FilterChip(selected = d == day, onClick = { day = d }, label = { Text(label) })
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                androidx.compose.material3.TimePicker(state)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onPick(null) }) { Text("Jetzt") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("Abbrechen") }
+                    TextButton(onClick = { onPick(day.atTime(state.hour, state.minute).atZone(zone).toEpochSecond()) }) { Text("OK") }
+                }
+            }
+        }
     }
 }
 
@@ -288,6 +397,7 @@ private fun ItineraryCard(it: Itinerary, nowS: Long, expanded: Boolean, nav: Nav
             val sub = buildList {
                 if (firstTransit != null) add("${firstTransit.line} ${countdown(legStart(firstTransit), nowS)}")
                 add(if (it.transfers == 0) "direkt" else "${it.transfers} Umstieg${if (it.transfers == 1) "" else "e"}")
+                it.via?.let { v -> add("★ über ${shortName(v)}") }
                 if (first.from.t != null && first.from.rt != null && delayMin(first.from.t, first.from.rt) != 0) add("Plan ${hhmm(first.from.t)}")
             }
             Text(sub.joinToString(" · "), style = MaterialTheme.typography.bodySmall.merge(Tnum), color = MaterialTheme.colorScheme.onSurfaceVariant)

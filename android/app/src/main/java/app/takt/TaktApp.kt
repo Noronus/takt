@@ -24,7 +24,7 @@ class TaktApp : Application() {
         api = Api(prefs)
         stations = Stations(this, api)
         loc = Loc(this)
-        repo = Repo(this, api)
+        repo = Repo(this, api, prefs)
         guide = app.takt.data.Guide(this, api)
         // start loading everything the first screen (map) needs right away
         org.maplibre.android.MapLibre.getInstance(this)

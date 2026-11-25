@@ -15,10 +15,11 @@ fun ageText(s: Long): String = when {
     else -> "${s / 3600} h ${(s % 3600) / 60} min"
 }
 
-/** Countdown for a departure: "jetzt", "4 min", or clock time for later. */
+/** Countdown for a departure: "weg" (gone), "jetzt", "4 min", or clock time for later. */
 fun countdown(epochS: Long, nowS: Long): String {
     val m = Math.floorDiv(epochS - nowS, 60L)
     return when {
+        m < -1 -> "weg"
         m <= 0 -> "jetzt"
         m < 60 -> "$m min"
         else -> hhmm(epochS)
