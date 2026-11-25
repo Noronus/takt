@@ -10,7 +10,7 @@ phone ──HTTPS──> NetBird proxy (takt.example.de) ──WireGuard──> 
 
 | Layer | What it does |
 |---|---|
-| NetBird proxy | TLS with an automatic certificate, country allow list, CrowdSec IP reputation, only `/api/` forwarded |
+| NetBird proxy | TLS with an automatic certificate (Takt adds HSTS), country allow list, CrowdSec IP reputation, only `/api/` forwarded |
 | Takt: tokens | One token per person in `DATA/tokens.txt`, at least 32 characters, revocable within 10 s, no restart |
 | Takt: fail closed | A request that came through a proxy (has `X-Real-IP` / `X-Forwarded-For`) is refused when no token is configured. `REQUIRE_TOKEN=true` refuses to start without one |
 | Takt: proxy paths | Through the proxy only `/api/*` exists. `/rt/*.pb` (MOTIS realtime feed) and `/icon.png` answer 404 |

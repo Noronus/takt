@@ -150,7 +150,9 @@ export async function authHook(req: FastifyRequest, reply: FastifyReply) {
   }
 }
 
-export async function headersHook(_req: FastifyRequest, reply: FastifyReply) {
+export async function headersHook(req: FastifyRequest, reply: FastifyReply) {
+  // reached over HTTPS through the proxy: browsers must never fall back to plain HTTP for this host
+  if (viaProxy(req)) reply.header('strict-transport-security', 'max-age=31536000')
   reply.header('x-content-type-options', 'nosniff')
   reply.header('x-frame-options', 'DENY')
   reply.header('referrer-policy', 'no-referrer')
