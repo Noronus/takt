@@ -170,7 +170,8 @@ app.setErrorHandler((e: any, _req, reply) => {
 // ---------- input checks ----------
 
 const ID = /^[\w:.\-|]{1,120}$/
-const COORD = /^-?\d{1,3}(\.\d{1,8})?,-?\d{1,3}(\.\d{1,8})?$/
+// the app sends full double precision ("51.33971234567891,12.37312345678901")
+const COORD = /^(-?\d{1,3}(?:\.\d{1,20})?),(-?\d{1,3}(?:\.\d{1,20})?)$/
 const badRequest = (reply: any, what: string) => reply.code(400).send({ error: `ungültig: ${what}` })
 // unix seconds within ±60 days, or undefined; null if invalid
 function unixTime(v: string | undefined): Date | undefined | null {
@@ -257,7 +258,13 @@ app.get('/api/v1/departures', async (req, reply) => {
 // a known station id or "lat,lon"; anything else is rejected instead of being passed to MOTIS
 function place(p: unknown): string | null {
   if (typeof p !== 'string') return null
-  if (COORD.test(p)) return p
+  const c = COORD.exec(p)
+  if (c) {
+    const lat = Number(c[1]), lon = Number(c[2])
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
+    // ~10 cm is plenty for routing
+    return `${lat.toFixed(6)},${lon.toFixed(6)}`
+  }
   return stations.get(p)?.stopIds[0] ?? null
 }
 
