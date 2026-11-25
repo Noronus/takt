@@ -7,6 +7,12 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -191,7 +197,15 @@ private fun Root() {
     CompositionLocalProvider(LocalMapHolder provides holder) {
         // Surface sets the content color, so plain Text/Icon get onBackground instead of black
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            NavHost(nc, startDestination = "home") {
+            // own transitions: the default fades over 700 ms, so a new screen seemed to appear late.
+            // Short slide + fade, following the animation setting (off = instant).
+            NavHost(
+                nc, startDestination = "home",
+                enterTransition = { if (Anim.scale <= 0f) EnterTransition.None else slideInHorizontally(Anim.offset(220)) { it / 6 } + fadeIn(Anim.spec(160)) },
+                exitTransition = { if (Anim.scale <= 0f) ExitTransition.None else fadeOut(Anim.spec(120)) },
+                popEnterTransition = { if (Anim.scale <= 0f) EnterTransition.None else fadeIn(Anim.spec(160)) },
+                popExitTransition = { if (Anim.scale <= 0f) ExitTransition.None else slideOutHorizontally(Anim.offset(200)) { it / 6 } + fadeOut(Anim.spec(160)) },
+            ) {
                 composable("home") { Home(nav, tab) }
                 composable("station/{id}") { StationScreen(it.arguments?.getString("id")!!, nav) }
                 composable("trip?id={id}&line={line}") {
