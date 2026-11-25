@@ -149,7 +149,7 @@ async function insaFallback(st: Station, from: Date, minutes: number): Promise<D
 const app = Fastify({
   logger: false,
   bodyLimit: 1024,          // the API is GET only
-  maxParamLength: 64,
+  routerOptions: { maxParamLength: 64 },
   connectionTimeout: 30_000,
   requestTimeout: 30_000,
   return503OnClosing: true,

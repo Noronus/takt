@@ -1,6 +1,9 @@
 // Realtime: polls the Germany-wide DELFI GTFS-RT feed, keeps only trips of our area and
 // serves the result to MOTIS. Polls fast only while the app is in use.
 import { readFile } from 'node:fs/promises'
+import http from 'node:http'
+import https from 'node:https'
+import { createGunzip } from 'node:zlib'
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings'
 import { config } from './config.ts'
 import { paths } from './data.ts'
@@ -42,15 +45,48 @@ export async function loadTripIds() {
   tripIds = m
 }
 
+// Plain node:http instead of fetch: aborting a stalled download with fetch (undici, Node 24)
+// can crash the whole process with "assert(!this.paused)".
+const MAX_FEED = 100 * 1024 * 1024
+export function download(url: string, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number, etag: string, body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    let done = false
+    const finish = (err: Error | null, v?: { status: number, etag: string, body: Buffer }) => {
+      if (done) return
+      done = true; clearTimeout(timer)
+      if (err) { req.destroy(); reject(err) } else resolve(v!)
+    }
+    const req = (url.startsWith('https:') ? https : http).get(url, { headers }, res => {
+      const status = res.statusCode || 0
+      const tag = String(res.headers.etag || '')
+      if (status !== 200) { res.resume(); return finish(null, { status, etag: tag, body: Buffer.alloc(0) }) }
+      const stream = res.headers['content-encoding'] === 'gzip' ? res.pipe(createGunzip()) : res
+      const chunks: Buffer[] = []
+      let size = 0
+      stream.on('data', (c: Buffer) => {
+        size += c.length
+        if (size > MAX_FEED) finish(new Error('Feed zu groß'))
+        else chunks.push(c)
+      })
+      stream.on('end', () => finish(null, { status, etag: tag, body: Buffer.concat(chunks) }))
+      stream.on('error', e => finish(e))
+      res.on('error', e => finish(e))
+      res.on('close', () => { if (!res.complete) finish(new Error('Verbindung abgebrochen')) })
+    })
+    req.on('error', e => finish(e))
+    const timer = setTimeout(() => finish(new Error('Zeitüberschreitung')), timeoutMs)
+  })
+}
+
 async function poll() {
   try {
     const headers: Record<string, string> = { 'user-agent': config.userAgent, 'accept-encoding': 'gzip' }
     if (etag) headers['if-none-match'] = etag
-    const res = await fetch(config.rtUrl, { headers, signal: AbortSignal.timeout(60_000) })
+    const res = await download(config.rtUrl, headers, 60_000)
     if (res.status === 304) { rt.fetchedAt = Date.now(); return }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const buf = new Uint8Array(await res.arrayBuffer())
-    etag = res.headers.get('etag') || ''
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`)
+    const buf = new Uint8Array(res.body)
+    etag = res.etag
     const feed = TR.FeedMessage.decode(buf)
     let keepAll: typeof feed.entity = []
     for (const [tag, ids] of tripIds) {
