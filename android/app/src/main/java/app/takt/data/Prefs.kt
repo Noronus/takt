@@ -29,6 +29,7 @@ data class ConfigExport(
     val animScale: Float? = null,
     val mapDark: Boolean? = null,
     val mapSat: Boolean? = null,
+    val mapLive: Boolean? = null,
     val pastMin: Int? = null,
     val favStations: List<String> = emptyList(),
     val favRoutes: List<FavRoute> = emptyList(),
@@ -93,6 +94,11 @@ class Prefs(ctx: Context) {
     val mapSat: StateFlow<Boolean> = _mapSat
     fun toggleMapSat() { _mapSat.value = !_mapSat.value; sp.edit().putBoolean("mapSat", _mapSat.value).commit() }
 
+    /** Live vehicles on the map (kept across restarts). */
+    private val _mapLive = MutableStateFlow(sp.getBoolean("mapLive", false))
+    val mapLive: StateFlow<Boolean> = _mapLive
+    fun toggleMapLive() { _mapLive.value = !_mapLive.value; sp.edit().putBoolean("mapLive", _mapLive.value).commit() }
+
     private val _favStations = MutableStateFlow(sp.getString("favStations", "")!!.split('\n').filter { it.isNotBlank() })
     val favStations: StateFlow<List<String>> = _favStations
 
@@ -124,7 +130,7 @@ class Prefs(ctx: Context) {
 
     fun exportJson(withToken: Boolean): String = pretty.encodeToString(ConfigExport.serializer(), ConfigExport(
         server = server, token = if (withToken) token.ifBlank { null } else null,
-        animScale = animScale, mapDark = _mapDark.value, mapSat = _mapSat.value, pastMin = pastMin,
+        animScale = animScale, mapDark = _mapDark.value, mapSat = _mapSat.value, mapLive = _mapLive.value, pastMin = pastMin,
         favStations = _favStations.value, favRoutes = _favRoutes.value,
         preferred = _preferred.value, preferSlack = preferSlack, alertLines = _alertLines.value.toList(),
     ))
@@ -138,6 +144,7 @@ class Prefs(ctx: Context) {
         c.animScale?.let { animScale = it }
         c.mapDark?.let { if (it != _mapDark.value) toggleMapDark() }
         c.mapSat?.let { if (it != _mapSat.value) toggleMapSat() }
+        c.mapLive?.let { if (it != _mapLive.value) toggleMapLive() }
         c.pastMin?.let { changePastMin(it) }
         c.preferSlack?.let { changePreferSlack(it) }
         val st = (_favStations.value + c.favStations).distinct()

@@ -13,7 +13,8 @@ osm: mdv.osm.pbf
 timetable:
   first_day: TODAY
   num_days: 60
-  railviz: false
+  # live vehicles on the map (/api/v1/vehicles uses /api/v1/map/trips)
+  railviz: true
   with_shapes: true
   # map-match every route onto OSM rails/roads (gtfs.de has no shapes.txt)
   route_shapes:

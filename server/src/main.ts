@@ -484,6 +484,52 @@ app.get('/api/v1/geocode', async (req, reply) => {
   }
 })
 
+// ---------- live vehicles ----------
+// MOTIS "railviz": trip segments (stop to stop, with realtime times and the path) in a box and a time
+// window. The app moves each vehicle along its segment by time, like geOps; there are no GPS positions.
+const vehCache = new Map<string, { at: number, body: any }>()
+app.get('/api/v1/vehicles', async (req, reply) => {
+  const q = req.query as Record<string, string>
+  const a = COORD.exec(q.min ?? ''), b = COORD.exec(q.max ?? '')
+  const zoom = Number(q.zoom)
+  if (!a || !b) return badRequest(reply, 'min/max')
+  if (!(zoom >= 11 && zoom <= 22)) return badRequest(reply, 'zoom')
+  let [lat1, lon1, lat2, lon2] = [Number(a[1]), Number(a[2]), Number(b[1]), Number(b[2])]
+  if (lat1 > lat2) [lat1, lat2] = [lat2, lat1]
+  if (lon1 > lon2) [lon1, lon2] = [lon2, lon1]
+  // a city at most: keeps answers small and MOTIS fast
+  if (lat2 - lat1 > 0.35 || lon2 - lon1 > 0.55) return reply.code(400).send({ error: 'Ausschnitt zu groß, näher heranzoomen' })
+  const r3 = (x: number) => Math.round(x * 500) / 500   // ~200 m grid: nearby requests share the cache
+  const key = [r3(lat1), r3(lon1), r3(lat2), r3(lon2), Math.round(zoom)].join(',')
+  const now = Math.round(Date.now() / 1000)
+  const c = vehCache.get(key)
+  if (c && Date.now() - c.at < 5000) return c.body
+  try {
+    const segs = await motis('/api/v1/map/trips', {
+      min: `${r3(lat1)},${r3(lon1)}`, max: `${r3(lat2)},${r3(lon2)}`, zoom: Math.round(zoom),
+      startTime: new Date((now - 60) * 1000).toISOString(), endTime: new Date((now + 150) * 1000).toISOString(),
+    }, 6000)
+    const vehicles = (Array.isArray(segs) ? segs : []).flatMap((sg: any) => (sg.trips || []).slice(0, 1).map((t: any) => {
+      const line = t.displayName || t.routeShortName || ''
+      return {
+        trip: t.tripId, line, mode: appMode(sg.mode, line),
+        color: sg.routeColor ? `#${sg.routeColor}` : null,
+        dep: sec(sg.departure), arr: sec(sg.arrival), rt: !!sg.realTime,
+        to: (typeof sg.to === 'object' ? sg.to?.name : null) || null,
+        poly: typeof sg.polyline === 'string' ? sg.polyline : sg.polyline?.points ?? null,
+        precision: typeof sg.polyline === 'object' ? sg.polyline?.precision ?? 5 : 5,
+      }
+    })).filter((v: any) => v.trip && v.poly && v.dep != null && v.arr != null)
+    const body = { now, rt: rtInfo(), vehicles }
+    vehCache.set(key, { at: Date.now(), body })
+    if (vehCache.size > 500) for (const [k, v] of vehCache) if (Date.now() - v.at > 30_000) vehCache.delete(k)
+    return body
+  } catch (e: any) {
+    console.log(`[api] vehicles: ${e.message}`)
+    return reply.code(502).send({ error: 'Fahrzeugpositionen nicht abrufbar' })
+  }
+})
+
 app.get('/api/v1/alerts', async (_req, reply) => {
   if (!config.insaEnabled) return { alerts: [] }
   try { return { alerts: await insaAlerts() } } catch (e: any) {

@@ -54,6 +54,10 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
         return Timed(r, System.currentTimeMillis(), r.rt.feedAge)
     }
 
+    /** Running vehicles in a box ("lat,lon"); one try only, the map asks again soon anyway. */
+    suspend fun vehicles(min: String, max: String, zoom: Int): VehiclesResponse =
+        api.getJson("/api/v1/vehicles", mapOf("min" to min, "max" to max, "zoom" to zoom.toString()), attempts = 1)
+
     suspend fun alerts(): Timed<AlertsResponse> {
         val r: AlertsResponse = api.getJson("/api/v1/alerts")
         return Timed(r, System.currentTimeMillis(), null)

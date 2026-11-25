@@ -141,6 +141,15 @@ data class Alert(
     val stops: List<String> = emptyList(),
 )
 
+/** One stop-to-stop piece of a running trip (server: /api/v1/vehicles, from MOTIS railviz). */
+@Serializable
+data class VehicleSeg(
+    val trip: String, val line: String = "", val mode: String = "other", val color: String? = null,
+    val dep: Long, val arr: Long, val rt: Boolean = false, val to: String? = null,
+    val poly: String, val precision: Int = 5,
+)
+@Serializable data class VehiclesResponse(val now: Long = 0, val rt: RtInfo = RtInfo(), val vehicles: List<VehicleSeg> = emptyList())
+
 @Serializable data class AlertsResponse(val alerts: List<Alert> = emptyList())
 
 @Serializable

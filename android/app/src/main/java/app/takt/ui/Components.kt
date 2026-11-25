@@ -372,10 +372,10 @@ fun PillButton(text: String, icon: ImageVector?, primary: Boolean, onClick: () -
 
 /** Round floating icon button for map overlays. */
 @Composable
-fun RoundButton(icon: ImageVector, desc: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.size(48.dp),
+fun RoundButton(icon: ImageVector, desc: String, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
+    Surface(onClick = onClick, shape = CircleShape, color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.size(48.dp),
         border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Box(contentAlignment = Alignment.Center) { Icon(icon, desc, tint = MaterialTheme.colorScheme.onSurface) }
+        Box(contentAlignment = Alignment.Center) { Icon(icon, desc, tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface) }
     }
 }
 

@@ -3,6 +3,7 @@ package app.takt.ui
 import android.content.Context
 import android.graphics.RectF
 import android.view.ViewGroup
+import androidx.compose.material.icons.rounded.DirectionsBus
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.SatelliteAlt
 import androidx.compose.material.icons.rounded.Settings
@@ -90,6 +91,7 @@ class MapHolder(ctx: Context) {
     private var styleDark: Boolean? = null
     private var styleSat: Boolean? = null
     var onStationClick: (String?) -> Unit = {}
+    var onVehicleClick: (trip: String, line: String) -> Unit = { _, _ -> }
     private var stationsLoaded = false
     /** Map is shown once stations are in it (or after a timeout), so tiles and stops appear together. */
     var revealed by mutableStateOf(false)
@@ -110,6 +112,11 @@ class MapHolder(ctx: Context) {
             m.addOnCameraMoveStartedListener { reason -> if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) cameraSettled = true }
             m.addOnMapClickListener { ll ->
                 val p = m.projection.toScreenLocation(ll)
+                // a live vehicle under the finger wins over the stops
+                m.queryRenderedFeatures(RectF(p.x - 24f, p.y - 24f, p.x + 24f, p.y + 24f), "veh-dot").firstOrNull()?.let { f ->
+                    val trip = f.getStringProperty("trip")
+                    if (!trip.isNullOrBlank()) { onVehicleClick(trip, f.getStringProperty("line") ?: ""); return@addOnMapClickListener true }
+                }
                 val r = 30f
                 val hit = m.queryRenderedFeatures(RectF(p.x - r, p.y - r, p.x + r, p.y + r), "st-dot")
                 val best = hit.minByOrNull {
@@ -306,6 +313,27 @@ class MapHolder(ctx: Context) {
         if (d > 0) map?.animateCamera(u, d) else map?.moveCamera(u)
     }
 
+    /** Live vehicles: dots in line colour with the line number, above everything else. */
+    fun setVehicles(geojson: String) {
+        val st = style ?: return
+        if (st.getSource("veh") == null) {
+            if (geojson == LiveVehicles.EMPTY) return
+            st.addSource(GeoJsonSource("veh"))
+            st.addLayer(CircleLayer("veh-dot", "veh").withProperties(
+                circleColor(toColor(get("c"))),
+                circleRadius(interpolate(linear(), zoom(), stop(12, 4.5f), stop(15, 10f), stop(18, 13f))),
+                circleStrokeColor("#FFFFFF"), circleStrokeWidth(1.8f),
+                circleOpacity(switchCase(eq(get("rt"), 1), literal(1f), literal(0.8f))),
+            ))
+            st.addLayer(SymbolLayer("veh-label", "veh").withProperties(
+                textField(get("line")), textFont(arrayOf("Noto Sans Regular")),
+                textSize(interpolate(linear(), zoom(), stop(14, 9f), stop(18, 12f))),
+                textColor("#FFFFFF"), textAllowOverlap(true), textIgnorePlacement(true),
+            ).apply { minZoom = 14f })
+        }
+        (st.getSource("veh") as? GeoJsonSource)?.setGeoJson(geojson)
+    }
+
     fun setStations(geojson: String, version: String) {
         if (version == shownVersion) return
         (style?.getSource("stations") as? GeoJsonSource)?.setGeoJson(geojson)
@@ -365,6 +393,7 @@ fun MapScreen(nav: Nav) {
     val geojson by app.stations.geojson.collectAsState()
     val mapDark by app.prefs.mapDark.collectAsState()
     val mapSat by app.prefs.mapSat.collectAsState()
+    val mapLive by app.prefs.mapLive.collectAsState()
     var permTick by remember { mutableIntStateOf(0) }
     val askPerm = rememberLocationPermission { permTick++ }
     val scope = rememberCoroutineScope()
@@ -380,7 +409,13 @@ fun MapScreen(nav: Nav) {
     }
     // back closes the station panel first (registered last, so it wins)
     androidx.activity.compose.BackHandler(enabled = MapSel.selected != null) { MapSel.selected = null }
+    // live vehicles: running while switched on and the map is shown (style changes keep the loop)
+    LaunchedEffect(holder.map, mapLive) {
+        if (!mapLive) { LiveVehicles.clear(); holder.setVehicles(LiveVehicles.EMPTY); return@LaunchedEffect }
+        LiveVehicles.run(holder)
+    }
     SideEffect {
+        holder.onVehicleClick = { trip, line -> nav.trip(trip, line) }
         holder.onStationClick = { id ->
             val st = app.stations.get(id)
             if (st != null) {
@@ -434,6 +469,8 @@ fun MapScreen(nav: Nav) {
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomInset.current)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.Bottom) {
                 RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
+                RoundButton(androidx.compose.material.icons.Icons.Rounded.DirectionsBus,
+                    if (mapLive) "Live-Fahrzeuge aus" else "Live-Fahrzeuge an", { app.prefs.toggleMapLive() }, active = mapLive)
                 RoundButton(if (mapSat) androidx.compose.material.icons.Icons.Rounded.Map else androidx.compose.material.icons.Icons.Rounded.SatelliteAlt,
                     if (mapSat) "Luftbild aus" else "Luftbild an", { app.prefs.toggleMapSat() })
                 RoundButton(if (mapDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode, "Kartenstil wechseln", { app.prefs.toggleMapDark() })

@@ -42,6 +42,7 @@ Every live view shows a chip such as `Daten 42 s alt` or `Daten 3 min 05 s alt` 
 | `GET /api/v1/plan?from=ID|lat,lon&to=…&time=&arriveBy=1&cursor=` | journeys |
 | `GET /api/v1/trip?id=` | stops of one trip |
 | `GET /api/v1/alerts` | disruption messages in the area |
+| `GET /api/v1/vehicles?min=lat,lon&max=lat,lon&zoom=` | running trips in a box (MOTIS railviz): stop-to-stop pieces with realtime times and path; the app moves the vehicles along them |
 | `GET /api/v1/geocode?text=` | addresses and places |
 | `GET /api/v1/status` | data state, realtime stats, MOTIS health |
 
