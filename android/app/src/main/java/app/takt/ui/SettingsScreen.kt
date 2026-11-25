@@ -85,12 +85,20 @@ fun SettingsScreen(nav: Nav) {
 
             Spacer(Modifier.height(24.dp))
             Text("Vergangene Fahrten", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-                for (v in listOf(0, 2, 5, 10, 15)) androidx.compose.material3.FilterChip(
-                    selected = app.prefs.pastMin == v, onClick = { app.prefs.changePastMin(v) }, label = { Text(if (v == 0) "Aus" else "$v min") },
-                )
-            }
-            Text("So lange bleiben abgefahrene Fahrten in den Abfahrtslisten stehen.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+            var pastText by remember { mutableStateOf(app.prefs.pastMin.toString()) }
+            OutlinedTextField(
+                pastText,
+                { v ->
+                    // digits only, at most 120 min; an empty field counts as 0
+                    val d = v.filter(Char::isDigit).take(3)
+                    pastText = d
+                    app.prefs.changePastMin((d.toIntOrNull() ?: 0).coerceIn(0, 120))
+                },
+                label = { Text("Minuten") }, suffix = { Text("min") }, singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                modifier = Modifier.padding(top = 8.dp).width(160.dp),
+            )
+            Text("So lange bleiben abgefahrene Fahrten in den Abfahrtslisten stehen. 0 = aus, höchstens 120.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(24.dp))
             Text("Bevorzugte Umstiege", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
