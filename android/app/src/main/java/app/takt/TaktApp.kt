@@ -56,14 +56,16 @@ class TaktApp : Application() {
                     r.newBuilder().removeHeader("Pragma").removeHeader("Expires").removeHeader("Content-Length")
                         .header("Cache-Control", "public, max-age=31536000").body(okhttp3.ResponseBody.create(t, body)).build()
                 }
-                val out = runCatching { recolor(raw, fix) }.getOrNull()
+                // some services gzip the PNG; a network interceptor sees it still packed
+                val gz = r.header("Content-Encoding").equals("gzip", ignoreCase = true)
+                val out = runCatching { recolor(if (gz) java.util.zip.GZIPInputStream(raw.inputStream()).readBytes() else raw, fix) }.onFailure { if (raw.size > 1000) android.util.Log.w("Takt", "aerial recolor: $it ${chain.request().url.host} ${raw.size} B ${type} head=${raw.take(16).joinToString(" ") { "%02x".format(it) }}") }.getOrNull()
                     ?: return@addNetworkInterceptor when {
                         // empty tile outside that state (tiny PNG Android cannot decode): keep it as it is
                         type?.type == "image" -> keep(raw, type)
                         // a service error page: pass it on, do not keep it
                         else -> r.newBuilder().header("Cache-Control", "no-store").body(okhttp3.ResponseBody.create(type, raw)).build()
                     }
-                r.newBuilder().removeHeader("Pragma").removeHeader("Expires").removeHeader("Content-Length")
+                r.newBuilder().removeHeader("Pragma").removeHeader("Expires").removeHeader("Content-Length").removeHeader("Content-Encoding")
                     .header("Cache-Control", "public, max-age=31536000").header("Content-Type", "image/webp")
                     .body(okhttp3.ResponseBody.create("image/webp".toMediaTypeOrNull(), out)).build()
             }.build()
@@ -75,18 +77,32 @@ class TaktApp : Application() {
             })
     }
 
-    /** Applies a per-channel gain and offset (0..255) to an image tile; transparency stays. */
+    /** Per channel: gain and offset (0..255), then a gamma curve against haze; then saturation. Transparency stays. */
     private fun recolor(bytes: ByteArray, m: FloatArray): ByteArray {
-        val src = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("no image")
-        val dst = android.graphics.Bitmap.createBitmap(src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888)
-        val cm = android.graphics.ColorMatrix(floatArrayOf(
-            m[0], 0f, 0f, 0f, m[1],
-            0f, m[2], 0f, 0f, m[3],
-            0f, 0f, m[4], 0f, m[5],
-            0f, 0f, 0f, 1f, 0f,
-        ))
-        android.graphics.Canvas(dst).drawBitmap(src, 0f, 0f, android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) })
-        src.recycle()
+        val opts = android.graphics.BitmapFactory.Options().apply { inMutable = true; inPremultiplied = false }
+        val src = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: error("no image")
+        val gamma = m[6]
+        val lut = Array(3) { c -> IntArray(256) { v ->
+            val lin = (v * m[c * 2] + m[c * 2 + 1]).coerceIn(0f, 255f) / 255f
+            (Math.pow(lin.toDouble(), gamma.toDouble()) * 255 + 0.5).toInt().coerceIn(0, 255)
+        } }
+        val w = src.width; val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val sat = m[7]
+        for (i in px.indices) {
+            val p = px[i]
+            val r = lut[0][(p shr 16) and 0xFF]; val g = lut[1][(p shr 8) and 0xFF]; val b = lut[2][p and 0xFF]
+            // saturation around the luma of the pixel
+            val l = 0.299f * r + 0.587f * g + 0.114f * b
+            val r2 = (l + (r - l) * sat).toInt().coerceIn(0, 255)
+            val g2 = (l + (g - l) * sat).toInt().coerceIn(0, 255)
+            val b2 = (l + (b - l) * sat).toInt().coerceIn(0, 255)
+            px[i] = (p and 0xFF000000.toInt()) or (r2 shl 16) or (g2 shl 8) or b2
+        }
+        // straight (not premultiplied) pixels in and out: no Canvas, it refuses such bitmaps
+        val dst = src
+        dst.setPixels(px, 0, w, 0, 0, w, h)
         val o = java.io.ByteArrayOutputStream()
         @Suppress("DEPRECATION")
         val fmt = if (android.os.Build.VERSION.SDK_INT >= 30) android.graphics.Bitmap.CompressFormat.WEBP_LOSSY else android.graphics.Bitmap.CompressFormat.WEBP
@@ -100,13 +116,14 @@ class TaktApp : Application() {
     companion object {
         const val MAP_CACHE_BYTES = 5L * 1024 * 1024 * 1024
         /**
-         * Colour correction per aerial service: gain and offset for red, green, blue (tuned on sample tiles).
+         * Colour correction per aerial service, tuned on sample tiles against summer photos:
+         * gain/offset for red, green, blue, then gamma (> 1 darkens the hazy mid tones) and saturation.
          * Sachsen: early-spring flight with a blue-white haze. Sachsen-Anhalt: dark and slightly warm.
          */
         val AERIAL_COLOR = mapOf(
-            "geodienste.sachsen.de" to floatArrayOf(1.30f, -38f, 1.20f, -30f, 1.08f, -28f),
-            "www.geodatenportal.sachsen-anhalt.de" to floatArrayOf(1.22f, -4f, 1.22f, -4f, 1.32f, -6f),
-            "www.geoproxy.geoportal-th.de" to floatArrayOf(1.10f, -10f, 1.10f, -10f, 1.10f, -10f),
+            "geodienste.sachsen.de" to floatArrayOf(1.30f, -38f, 1.20f, -30f, 1.08f, -28f, 1.35f, 1.15f),
+            "www.geodatenportal.sachsen-anhalt.de" to floatArrayOf(1.22f, -4f, 1.22f, -4f, 1.32f, -6f, 1.2f, 1.1f),
+            "www.geoproxy.geoportal-th.de" to floatArrayOf(1.10f, -10f, 1.10f, -10f, 1.10f, -10f, 1.2f, 1.1f),
         )
         lateinit var instance: TaktApp; private set
         var t0 = 0L

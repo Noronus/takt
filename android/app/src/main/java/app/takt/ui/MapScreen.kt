@@ -334,7 +334,7 @@ class MapHolder(ctx: Context) {
 val LocalMapHolder = staticCompositionLocalOf<MapHolder> { error("no map") }
 
 /** Raise when the states publish new flights: every phone then loads the aerial tiles again once. */
-const val AERIAL_VERSION = 2
+const val AERIAL_VERSION = 6
 
 /** Journey shown on the map ("Auf Karte zeigen"). Saved like the journey fields. */
 object MapRoute {
