@@ -69,12 +69,21 @@ object JourneyState {
     private val prefs get() = app.takt.TaktApp.instance.prefs
     private var _from by mutableStateOf(prefs.loadPlace("jFrom"))
     private var _to by mutableStateOf(prefs.loadPlace("jTo"))
+    // start and destination are never the same place: picking the other field's place swaps the two
     var from: SavedPlace?
         get() = _from
-        set(v) { _from = v; prefs.savePlace("jFrom", v) }
+        set(v) {
+            if (v != null && v.param() == _to?.param()) storeTo(_from)
+            _from = v; prefs.savePlace("jFrom", v)
+        }
     var to: SavedPlace?
         get() = _to
-        set(v) { _to = v; prefs.savePlace("jTo", v) }
+        set(v) {
+            if (v != null && v.param() == _from?.param()) storeFrom(_to)
+            _to = v; prefs.savePlace("jTo", v)
+        }
+    private fun storeFrom(v: SavedPlace?) { _from = v; prefs.savePlace("jFrom", v) }
+    private fun storeTo(v: SavedPlace?) { _to = v; prefs.savePlace("jTo", v) }
 }
 
 object Tabs { const val MAP = 0; const val NEARBY = 1; const val JOURNEY = 2; const val ALERTS = 3 }
