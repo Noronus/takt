@@ -74,7 +74,7 @@ fun StationScreen(stationId: String, nav: Nav) {
                 itemsIndexed(deps, key = { _, d -> "${d.trip}|${d.t}" }) { i, d ->
                     Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp), shape = groupShape(i, deps.size), color = MaterialTheme.colorScheme.surfaceContainer) {
                         Column {
-                            DepartureRow(d, now, onClick = if (d.trip.isNotBlank() && live.data?.value?.source != "insa") ({ nav.trip(d.trip, d.line) }) else null)
+                            DepartureRow(d, now, onClick = if (d.trip.isNotBlank() && live.data?.value?.source != "insa") ({ nav.trip(d.trip, d.line, stationId) }) else null)
                             if (i < deps.size - 1) RowDivider(70.dp)
                         }
                     }

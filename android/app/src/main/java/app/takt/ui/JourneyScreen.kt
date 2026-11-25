@@ -473,7 +473,7 @@ private fun LegDetail(l: Leg, nav: Nav) {
     }
     val c = parseColor(l.color) ?: modeColor(l.mode)
     val trackWord = if (l.mode == "sbahn" || l.mode == "train") "Gl." else "Steig"
-    Column(Modifier.fillMaxWidth().clickableRow { l.trip?.let { nav.trip(it, l.line) } }.padding(vertical = 6.dp)) {
+    Column(Modifier.fillMaxWidth().clickableRow { l.trip?.let { nav.trip(it, l.line, l.from.station) } }.padding(vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             TimeWithDelay(l.from.t, l.from.rt, l.cancelled)
             Box(Modifier.padding(top = 4.dp).size(10.dp).clip(CircleShape).background(c))

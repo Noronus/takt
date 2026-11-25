@@ -558,7 +558,7 @@ private fun StationPanel(s: Station, nav: Nav, onClose: () -> Unit, onPickDest: 
             deps.forEachIndexed { i, d ->
                 if (i > 0) RowDivider(70.dp)
                 DepartureRow(d, now, onClick = {
-                    if (d.trip.isNotBlank() && live.data?.value?.source != "insa") nav.trip(d.trip, d.line) else nav.station(s.id)
+                    if (d.trip.isNotBlank() && live.data?.value?.source != "insa") nav.trip(d.trip, d.line, s.id) else nav.station(s.id)
                 })
             }
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

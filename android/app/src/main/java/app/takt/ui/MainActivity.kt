@@ -101,7 +101,7 @@ class Nav(private val nc: NavHostController, private val tab: MutableIntState) {
         nc.addOnDestinationChangedListener { _, d, a ->
             route = when (d.route) {
                 "station/{id}" -> "station/${Uri.encode(a?.getString("id") ?: "")}"
-                "trip?id={id}&line={line}" -> "trip?id=${Uri.encode(a?.getString("id") ?: "")}&line=${Uri.encode(a?.getString("line") ?: "")}"
+                "trip?id={id}&line={line}&at={at}" -> "trip?id=${Uri.encode(a?.getString("id") ?: "")}&line=${Uri.encode(a?.getString("line") ?: "")}&at=${Uri.encode(a?.getString("at") ?: "")}"
                 "settings" -> "settings"
                 else -> null
             }
@@ -110,7 +110,8 @@ class Nav(private val nc: NavHostController, private val tab: MutableIntState) {
 
     fun back() { nc.popBackStack() }
     fun station(id: String) = nc.navigate("station/${Uri.encode(id)}")
-    fun trip(id: String, line: String) = nc.navigate("trip?id=${Uri.encode(id)}&line=${Uri.encode(line)}")
+    /** [at]: station the list opens at (the stop it was opened from); null = where the vehicle is now. */
+    fun trip(id: String, line: String, at: String? = null) = nc.navigate("trip?id=${Uri.encode(id)}&line=${Uri.encode(line)}&at=${Uri.encode(at ?: "")}")
     fun settings() = nc.navigate("settings")
     fun setStart(p: SavedPlace) { JourneyState.from = p; journey() }
     fun setDest(p: SavedPlace) { JourneyState.to = p; journey() }
@@ -217,8 +218,8 @@ private fun Root() {
             ) {
                 composable("home") { Home(nav, tab) }
                 composable("station/{id}") { StationScreen(it.arguments?.getString("id")!!, nav) }
-                composable("trip?id={id}&line={line}") {
-                    TripScreen(it.arguments?.getString("id")!!, it.arguments?.getString("line") ?: "", nav)
+                composable("trip?id={id}&line={line}&at={at}") {
+                    TripScreen(it.arguments?.getString("id")!!, it.arguments?.getString("line") ?: "", it.arguments?.getString("at")?.ifBlank { null }, nav)
                 }
                 composable("settings") { SettingsScreen(nav) }
             }

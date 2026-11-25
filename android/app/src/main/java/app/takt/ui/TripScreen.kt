@@ -29,6 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,7 +44,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 @Composable
-fun TripScreen(tripId: String, line: String, nav: Nav) {
+fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
     val app = TaktApp.instance
     val live = remember(tripId) { Live<TripResponse>() }
     LaunchedEffect(tripId) {
@@ -55,6 +58,20 @@ fun TripScreen(tripId: String, line: String, nav: Nav) {
     }
     val t = live.data?.value
     val now = nowMs() / 1000
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val stopsNow = t?.stops.orEmpty()
+    // next stop the vehicle reaches (realtime if known); the one before it is where it last was
+    fun stopTime(s: app.takt.data.TripStop) = (s.arr ?: s.dep)?.let { it.rt ?: it.t }
+    val next = stopsNow.indexOfFirst { s -> (stopTime(s) ?: 0) >= now }.let { if (it < 0) stopsNow.size else it }
+    // open once at the stop it came from, or where the vehicle is; later refreshes do not move the list
+    var scrolled by remember(tripId) { mutableStateOf(false) }
+    LaunchedEffect(t != null) {
+        if (t == null || scrolled) return@LaunchedEffect
+        scrolled = true
+        val target = at?.let { a -> stopsNow.indexOfFirst { it.station == a } }?.takeIf { it >= 0 } ?: (next - 1)
+        // item 0 is the header; keep one stop above the target in view
+        if (target > 1) listState.scrollToItem(1 + target - 1)
+    }
     val accent = parseColor(t?.color) ?: t?.mode?.let(::modeColor)?.takeIf { t.mode != "other" } ?: MaterialTheme.colorScheme.primary
     // top bar outside the list: back and data age stay visible while scrolling the stops
     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -63,7 +80,7 @@ fun TripScreen(tripId: String, line: String, nav: Nav) {
         Spacer(Modifier.weight(1f))
         AgeChip(live.data, live.loading, live.error, compact = true)
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
         item {
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 LineBadge(t?.line ?: line, t?.mode ?: "other", t?.color)
@@ -90,13 +107,16 @@ fun TripScreen(tripId: String, line: String, nav: Nav) {
                 Box(Modifier.width(24.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     Column(Modifier.fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.width(3.dp).weight(1f).background(if (i == 0) androidx.compose.ui.graphics.Color.Transparent else accent.copy(alpha = if (past) 0.35f else 1f)))
-                        Box(Modifier.size(12.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).border(3.dp, accent.copy(alpha = if (past) 0.35f else 1f), CircleShape))
+                        // the vehicle: a filled dot on its next stop (or at the stop while it waits there)
+                        if (i == next && t?.cancelled != true && next < stops.size) Box(Modifier.size(16.dp).clip(CircleShape).background(accent).border(2.dp, MaterialTheme.colorScheme.background, CircleShape))
+                        else Box(Modifier.size(12.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).border(3.dp, accent.copy(alpha = if (past) 0.35f else 1f), CircleShape))
                         Box(Modifier.width(3.dp).weight(1f).background(if (i == stops.size - 1) androidx.compose.ui.graphics.Color.Transparent else accent.copy(alpha = if (past) 0.35f else 1f)))
                     }
                 }
                 Spacer(Modifier.width(10.dp))
                 Row(Modifier.weight(1f).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(shortName(s.name), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = color,
+                        fontWeight = if (i == next || s.station == at) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
                         textDecoration = if (s.cancelled) TextDecoration.LineThrough else null)
                     s.track?.let { Text("Steig $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
