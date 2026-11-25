@@ -20,8 +20,8 @@ android {
         applicationId = "app.takt"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 4
+        versionName = "0.3.0"
         // default backend URL, set via -PtaktServer=http://host:port (or in the app settings)
         // phones are arm64; -PallAbis builds for the emulator too
         if (!project.hasProperty("allAbis")) ndk { abiFilters += "arm64-v8a" }

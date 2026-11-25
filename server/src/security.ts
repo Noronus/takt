@@ -110,7 +110,7 @@ function deny(reply: FastifyReply, code: number, error: string, retryAfter?: num
 }
 
 const lastSeen = new Map<string, number>()
-// "1.2.3.4 via proxy 10.0.3.5" or "10.0.1.136 direkt"
+// "203.0.113.7 via proxy 192.0.2.1" or "192.0.2.50 direkt"
 const where = (req: FastifyRequest) => viaProxy(req) ? `${clientIp(req)} via proxy ${req.socket.remoteAddress}` : `${clientIp(req)} direkt`
 
 export async function authHook(req: FastifyRequest, reply: FastifyReply) {

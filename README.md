@@ -61,6 +61,10 @@ The first start downloads ~600 MB (GTFS + OSM) and builds the data in about 10 m
 
 ## App
 
+**Download:** the APK is attached to the [latest release](https://github.com/Noronus/takt/releases/latest). One APK for everyone. It needs a personal access token from the server owner (Settings → Zugangs-Token).
+
+Build it yourself:
+
 ```sh
 cd android
 ./gradlew assembleRelease -PtaktServer=http://HOST:8097   # default server, can be changed in the app
