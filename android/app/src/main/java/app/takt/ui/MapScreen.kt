@@ -112,8 +112,8 @@ class MapHolder(ctx: Context) {
             m.addOnCameraMoveStartedListener { reason -> if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) cameraSettled = true }
             m.addOnMapClickListener { ll ->
                 val p = m.projection.toScreenLocation(ll)
-                // a live vehicle under the finger wins over the stops
-                m.queryRenderedFeatures(RectF(p.x - 24f, p.y - 24f, p.x + 24f, p.y + 24f), "veh-dot").firstOrNull()?.let { f ->
+                // a live vehicle near the finger wins over the stops (generous: the dots move)
+                m.queryRenderedFeatures(RectF(p.x - 48f, p.y - 48f, p.x + 48f, p.y + 48f), "veh-dot").firstOrNull()?.let { f ->
                     val trip = f.getStringProperty("trip")
                     if (!trip.isNullOrBlank()) { onVehicleClick(trip, f.getStringProperty("line") ?: ""); return@addOnMapClickListener true }
                 }

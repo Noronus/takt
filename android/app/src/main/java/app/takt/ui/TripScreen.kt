@@ -42,6 +42,7 @@ import app.takt.data.TripResponse
 import app.takt.data.hhmm
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
@@ -60,17 +61,24 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
     val now = nowMs() / 1000
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val stopsNow = t?.stops.orEmpty()
-    // next stop the vehicle reaches (realtime if known); the one before it is where it last was
-    fun stopTime(s: app.takt.data.TripStop) = (s.arr ?: s.dep)?.let { it.rt ?: it.t }
+    // next stop the vehicle leaves (realtime if known): while it waits at a stop, that stop; the one before is where it last was
+    fun stopTime(s: app.takt.data.TripStop) = (s.dep ?: s.arr)?.let { it.rt ?: it.t }
     val next = stopsNow.indexOfFirst { s -> (stopTime(s) ?: 0) >= now }.let { if (it < 0) stopsNow.size else it }
     // open once at the stop it came from, or where the vehicle is; later refreshes do not move the list
     var scrolled by remember(tripId) { mutableStateOf(false) }
     LaunchedEffect(t != null) {
         if (t == null || scrolled) return@LaunchedEffect
         scrolled = true
-        val target = at?.let { a -> stopsNow.indexOfFirst { it.station == a } }?.takeIf { it >= 0 } ?: (next - 1)
-        // item 0 is the header; keep one stop above the target in view
-        if (target > 1) listState.scrollToItem(1 + target - 1)
+        val target = at?.let { a -> stopsNow.indexOfFirst { it.station == a } }?.takeIf { it >= 0 } ?: next
+        // item 0 is the header, stop i is item i + 1; one stop above the target stays in view.
+        // Wait until the list holds the stops, else the position is cut short.
+        val item = target  // = 1 + (target - 1)
+        if (item > 1) {
+            kotlinx.coroutines.withTimeoutOrNull(2000) {
+                androidx.compose.runtime.snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > item }
+            }
+            listState.scrollToItem(item)
+        }
     }
     val accent = parseColor(t?.color) ?: t?.mode?.let(::modeColor)?.takeIf { t.mode != "other" } ?: MaterialTheme.colorScheme.primary
     // top bar outside the list: back and data age stay visible while scrolling the stops
@@ -80,7 +88,10 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
         Spacer(Modifier.weight(1f))
         AgeChip(live.data, live.loading, live.error, compact = true)
     }
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
+    // room below the last stop, so a stop near the end of the line can still scroll to the top
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    val tail = (maxHeight - 200.dp).coerceAtLeast(32.dp)
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = tail)) {
         item {
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 LineBadge(t?.line ?: line, t?.mode ?: "other", t?.color)
@@ -122,6 +133,7 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
                 }
             }
         }
+    }
     }
     }
 }
