@@ -19,6 +19,21 @@ import kotlin.coroutines.resumeWithException
 
 class ApiException(message: String, val status: Int = 0) : Exception(message)
 
+/** LAN, VPN (incl. NetBird 100.64.0.0/10) and local names. Only these may be reached without TLS. */
+fun isPrivateHost(host: String): Boolean {
+    val h = host.lowercase().trimEnd('.')
+    if (h == "localhost" || !h.contains('.') && !h.contains(':')) return true
+    if (listOf(".local", ".lan", ".home.arpa", ".internal", ".netbird.cloud", ".netbird.selfhosted").any { h.endsWith(it) }) return true
+    val p = h.split('.').mapNotNull { it.toIntOrNull() }
+    if (p.size == 4 && h.count { it == '.' } == 3) {
+        val (a, b) = p
+        return a == 10 || a == 127 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 100 && b in 64..127)
+    }
+    // IPv6 literal: loopback, unique local fc00::/7, link-local fe80::/10
+    val v6 = h.trim('[', ']')
+    return v6 == "::1" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe8") || v6.startsWith("fe9") || v6.startsWith("fea") || v6.startsWith("feb")
+}
+
 /**
  * Small HTTP client tuned for bad mobile networks: short timeouts, a few quick retries
  * with backoff, every call cancellable. The UI never waits on this without a cache.
@@ -38,7 +53,10 @@ class Api(private val prefs: Prefs) {
     private fun url(path: String, params: Map<String, String?>): String {
         val base = prefs.server.trimEnd('/')
         if (base.isBlank()) throw ApiException("Kein Server eingestellt (Einstellungen)")
-        val b = (base + path).toHttpUrlOrNull()?.newBuilder() ?: throw ApiException("Server-URL ungültig")
+        val parsed = (base + path).toHttpUrlOrNull() ?: throw ApiException("Server-URL ungültig")
+        // plain HTTP only inside LAN/VPN: over the internet the token would travel readable
+        if (!parsed.isHttps && !isPrivateHost(parsed.host)) throw ApiException("Unverschlüsselt nur im LAN/VPN – Adresse mit https:// eingeben")
+        val b = parsed.newBuilder()
         params.forEach { (k, v) -> if (v != null) b.addQueryParameter(k, v) }
         return b.build().toString()
     }

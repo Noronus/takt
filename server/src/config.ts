@@ -38,6 +38,14 @@ export const config = {
   insaEnabled: (env.INSA_ENABLED || 'true') !== 'false',
   userAgent: env.USER_AGENT || 'takt-private-transit-app',
   apiToken: env.API_TOKEN || '',
+  // one line per person: "NAME TOKEN" (token >= 32 chars). Edited live, checked every 10 s.
+  tokensFile: env.TOKENS_FILE || `${env.DATA_DIR || '/data'}/tokens.txt`,
+  // refuse to start without at least one valid token (set this when the API is reachable from the internet)
+  requireToken: env.REQUIRE_TOKEN === 'true',
+  // requests per person per minute
+  rateLimit: num('RATE_LIMIT', 120),
+  // parallel journey searches (MOTIS is the expensive part)
+  maxPlans: num('MAX_PLANS', 4),
 }
 
 export type Config = typeof config

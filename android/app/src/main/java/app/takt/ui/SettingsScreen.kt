@@ -55,8 +55,8 @@ fun SettingsScreen(nav: Nav) {
     }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState())) {
             Text("Server", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            OutlinedTextField(server, { server = it }, label = { Text("Adresse, z. B. http://10.x.x.x:8097") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(token, { token = it }, label = { Text("API-Token (optional)") }, singleLine = true,
+            OutlinedTextField(server, { server = it }, label = { Text("Adresse, z. B. https://takt.example.de") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(token, { token = it }, label = { Text("Zugangs-Token") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
             Row(Modifier.padding(top = 8.dp)) {
                 Button(onClick = {

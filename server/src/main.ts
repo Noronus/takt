@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { config } from './config.ts'
 import { initData, onStaticChange, state, busy, paths } from './data.ts'
 import { rt, startRt, loadTripIds, touchApp, pollNow } from './rt.ts'
+import { initAuth, authHook, headersHook, viaProxy, limited } from './security.ts'
 import { insaStationId, insaDepartures, insaAlerts, loadInsaMap, normLine, type InsaDep } from './insa.ts'
 
 // ---------- stations ----------
@@ -145,16 +146,39 @@ async function insaFallback(st: Station, from: Date, minutes: number): Promise<D
 
 // ---------- HTTP ----------
 
-const app = Fastify({ logger: false })
+const app = Fastify({
+  logger: false,
+  bodyLimit: 1024,          // the API is GET only
+  maxParamLength: 64,
+  connectionTimeout: 30_000,
+  requestTimeout: 30_000,
+  return503OnClosing: true,
+})
 await app.register(compress, { threshold: 1024 })
 
-app.addHook('onRequest', async (req, reply) => {
-  if (!req.url.startsWith('/api/')) return
-  touchApp()
-  if (config.apiToken && req.headers.authorization !== `Bearer ${config.apiToken}`) {
-    reply.code(401).send({ error: 'token' })
-  }
+app.addHook('onRequest', authHook)
+// only real app use (after the token check) switches the realtime feed to fast polling
+app.addHook('preHandler', async req => { if (req.user) touchApp() })
+app.addHook('onSend', headersHook)
+app.setNotFoundHandler((_req, reply) => { reply.code(404).send({ error: 'not found' }) })
+app.setErrorHandler((e: any, _req, reply) => {
+  console.log(`[api] ${e.message}`)
+  const code = e.statusCode && e.statusCode < 500 ? e.statusCode : 500
+  reply.code(code).send({ error: code < 500 ? 'ungültige Anfrage' : 'Serverfehler' })
 })
+
+// ---------- input checks ----------
+
+const ID = /^[\w:.\-|]{1,120}$/
+const COORD = /^-?\d{1,3}(\.\d{1,8})?,-?\d{1,3}(\.\d{1,8})?$/
+const badRequest = (reply: any, what: string) => reply.code(400).send({ error: `ungültig: ${what}` })
+// unix seconds within ±60 days, or undefined; null if invalid
+function unixTime(v: string | undefined): Date | undefined | null {
+  if (v === undefined || v === '') return undefined
+  if (!/^\d{9,11}$/.test(v)) return null
+  const t = Number(v) * 1000
+  return Math.abs(t - Date.now()) <= 60 * 86400_000 ? new Date(t) : null
+}
 
 app.get('/rt/:tag.pb', async (req, reply) => {
   const pb = rt.pb[(req.params as any).tag]
@@ -170,11 +194,21 @@ const rtInfo = () => ({
   fetchedAt: rt.fetchedAt ? Math.round(rt.fetchedAt / 1000) : null,
 })
 
-app.get('/api/v1/status', async () => ({
+app.get('/api/v1/status', async req => {
+  const motisState = await motis('/api/v1/health', {}, 3000).then(() => 'ok', (e: any) => e.message)
+  // through the proxy: only what the app's connection test shows, no internal hosts or errors
+  if (viaProxy(req)) return {
+    stations: stations.size, motis: motisState === 'ok' ? 'ok' : 'Fehler',
+    rt: { tripUpdates: rt.tripUpdates, ...rtInfo() },
+  }
+  return statusFull(motisState)
+})
+
+const statusFull = (motisState: string) => ({
   state, busy, stations: stations.size,
   rt: { ...rt, pb: undefined, pbBytes: Object.fromEntries(Object.entries(rt.pb).map(([k, v]) => [k, v.length])) },
-  motis: await motis('/api/v1/health', {}, 3000).then(() => 'ok', (e: any) => e.message),
-}))
+  motis: motisState,
+})
 
 app.get('/api/v1/stations', async (req, reply) => {
   if (!stationsBody) return reply.code(503).send({ error: 'Haltestellen werden noch aufbereitet' })
@@ -185,10 +219,12 @@ app.get('/api/v1/stations', async (req, reply) => {
 
 app.get('/api/v1/departures', async (req, reply) => {
   const q = req.query as Record<string, string>
-  const st = stations.get(q.station)
+  const st = typeof q.station === 'string' ? stations.get(q.station) : undefined
   if (!st) return reply.code(404).send({ error: 'unbekannte Haltestelle' })
-  const time = q.time ? new Date(Number(q.time) * 1000) : new Date()
-  const n = Math.min(80, Number(q.n) || 40)
+  const t = unixTime(q.time)
+  if (t === null) return badRequest(reply, 'time')
+  const time = t ?? new Date()
+  const n = Math.max(1, Math.min(80, Math.floor(Number(q.n)) || 40))
   const now = Math.round(Date.now() / 1000)
   try {
     const seen = new Set<string>()
@@ -212,15 +248,17 @@ app.get('/api/v1/departures', async (req, reply) => {
       const deps = await insaFallback(st, time, 90)
       return { station: { id: st.id, name: st.name }, now, source: 'insa', rt: rtInfo(), departures: deps.slice(0, n) }
     } catch (e2: any) {
-      return reply.code(502).send({ error: `keine Quelle erreichbar (${e2.message})` })
+      console.log(`[api] departures insa: ${e2.message}`)
+      return reply.code(502).send({ error: 'keine Quelle erreichbar' })
     }
   }
 })
 
-function place(p: string): string {
-  if (/^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(p)) return p
-  const st = stations.get(p)
-  return st ? st.stopIds[0] : p
+// a known station id or "lat,lon"; anything else is rejected instead of being passed to MOTIS
+function place(p: unknown): string | null {
+  if (typeof p !== 'string') return null
+  if (COORD.test(p)) return p
+  return stations.get(p)?.stopIds[0] ?? null
 }
 
 function mapPlace(p: any, dep: boolean) {
@@ -259,14 +297,21 @@ function mapLeg(l: any) {
 app.get('/api/v1/plan', async (req, reply) => {
   const q = req.query as Record<string, string>
   if (!q.from || !q.to) return reply.code(400).send({ error: 'from und to fehlen' })
+  const fromPlace = place(q.from), toPlace = place(q.to)
+  if (!fromPlace) return badRequest(reply, 'from')
+  if (!toPlace) return badRequest(reply, 'to')
+  const time = unixTime(q.time)
+  if (time === null) return badRequest(reply, 'time')
+  if (q.cursor !== undefined && (typeof q.cursor !== 'string' || q.cursor.length > 600)) return badRequest(reply, 'cursor')
   try {
-    const r = await motis('/api/v6/plan', {
-      fromPlace: place(q.from), toPlace: place(q.to),
-      time: q.time ? new Date(Number(q.time) * 1000).toISOString() : undefined,
+    const r = await limited(config.maxPlans, () => motis('/api/v6/plan', {
+      fromPlace, toPlace,
+      time: time?.toISOString(),
       arriveBy: q.arriveBy === '1' || q.arriveBy === 'true',
       pageCursor: q.cursor, detailedTransfers: true, joinInterlinedLegs: true,
       maxMatchingDistance: 250, language: 'de', numItineraries: 6,
-    }, 15000)
+    }, 15000))
+    if (r === 'busy') return reply.code(503).header('retry-after', '3').send({ error: 'Server ausgelastet, gleich nochmal versuchen' })
     const its = (r.itineraries || []).map((it: any) => ({
       id: it.id, transfers: it.transfers, duration: it.duration,
       legs: it.legs.map(mapLeg),
@@ -307,6 +352,7 @@ app.get('/api/v1/plan', async (req, reply) => {
 app.get('/api/v1/trip', async (req, reply) => {
   const q = req.query as Record<string, string>
   if (!q.id) return reply.code(400).send({ error: 'id fehlt' })
+  if (typeof q.id !== 'string' || !ID.test(q.id)) return badRequest(reply, 'id')
   try {
     const r = await motis('/api/v6/trip', { tripId: q.id, language: 'de' })
     const leg = r.legs?.[0]
@@ -320,13 +366,16 @@ app.get('/api/v1/trip', async (req, reply) => {
     const tline = leg.displayName || leg.routeShortName || ''
     return { line: tline, mode: appMode(leg.mode, tline), color: leg.routeColor ? `#${leg.routeColor}` : null, dir: leg.headsign || '', realtime: !!leg.realTime, cancelled: !!leg.cancelled, rt: rtInfo(), stops }
   } catch (e: any) {
-    return reply.code(502).send({ error: e.message })
+    console.log(`[api] trip: ${e.message}`)
+    return reply.code(502).send({ error: 'Fahrt nicht abrufbar' })
   }
 })
 
 app.get('/api/v1/geocode', async (req, reply) => {
   const q = req.query as Record<string, string>
-  if (!q.text || q.text.length < 3) return []
+  if (typeof q.text !== 'string' || q.text.length < 3) return []
+  if (q.text.length > 100) return badRequest(reply, 'text')
+  if (q.type !== undefined && !['STOP', 'ADDRESS', 'PLACE'].includes(q.type)) return badRequest(reply, 'type')
   try {
     const b = config.bbox
     const r = await motis('/api/v1/geocode', { text: q.text, language: 'de', type: q.type, place: `${(b.minLat + b.maxLat) / 2},${(b.minLon + b.maxLon) / 2}`, placeBias: 2 }, 5000)
@@ -342,17 +391,22 @@ app.get('/api/v1/geocode', async (req, reply) => {
       station: m.type === 'STOP' ? stopToStation.get(m.id)?.id || null : null,
     }))
   } catch (e: any) {
-    return reply.code(502).send({ error: e.message })
+    console.log(`[api] geocode: ${e.message}`)
+    return reply.code(502).send({ error: 'Adresssuche nicht erreichbar' })
   }
 })
 
 app.get('/api/v1/alerts', async (_req, reply) => {
   if (!config.insaEnabled) return { alerts: [] }
-  try { return { alerts: await insaAlerts() } } catch (e: any) { return reply.code(502).send({ error: e.message }) }
+  try { return { alerts: await insaAlerts() } } catch (e: any) {
+    console.log(`[api] alerts: ${e.message}`)
+    return reply.code(502).send({ error: 'Störungsmeldungen nicht abrufbar' })
+  }
 })
 
 // ---------- start ----------
 
+await initAuth()
 onStaticChange(async () => { await loadTripIds(); pollNow(); await loadStations() })
 await loadStations()
 await loadInsaMap()

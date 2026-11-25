@@ -22,7 +22,7 @@
   <DonateText/>
   <DonateLink/>
   <Requires>Takt-MOTIS (journey planner and departures, uses the folder motis/ inside this container's data folder)</Requires>
-  <Config Name="API-Port" Target="8080" Default="__API_PORT__" Mode="tcp" Description="Port the app connects to (keep it private: LAN or VPN only)" Type="Port" Display="always" Required="true" Mask="false">__API_PORT__</Config>
+  <Config Name="API-Port" Target="8080" Default="__API_PORT__" Mode="tcp" Description="Port the app connects to. Public access only through the NetBird reverse proxy (HTTPS), never by port forwarding." Type="Port" Display="always" Required="true" Mask="false">__API_PORT__</Config>
   <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/takt" Mode="rw" Description="Cache, prepared timetable, station list. Subfolder motis/ is mounted into Takt-MOTIS." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/takt</Config>
   <Config Name="MOTIS-URL" Target="MOTIS_URL" Default="http://__HOST__:__MOTIS_PORT__" Mode="" Description="Where this container reaches Takt-MOTIS" Type="Variable" Display="always" Required="true" Mask="false">http://__HOST__:__MOTIS_PORT__</Config>
   <Config Name="Eigene URL fuer MOTIS" Target="SELF_URL" Default="http://__HOST__:__API_PORT__" Mode="" Description="Where Takt-MOTIS reaches this container (for the filtered realtime feed)" Type="Variable" Display="always" Required="true" Mask="false">http://__HOST__:__API_PORT__</Config>
@@ -30,6 +30,8 @@
   <Config Name="Echtzeit aktiv (s)" Target="RT_ACTIVE_INTERVAL" Default="30" Mode="" Description="Realtime poll interval while the app is in use (feed is ~6 MB per fetch)" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
   <Config Name="Echtzeit idle (s)" Target="RT_IDLE_INTERVAL" Default="300" Mode="" Description="Realtime poll interval when the app was not used for 15 min" Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
   <Config Name="INSA" Target="INSA_ENABLED" Default="true" Mode="" Description="Use INSA HAFAS for S-Bahn realtime, disruptions and as fallback (unofficial)" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
-  <Config Name="API-Token" Target="API_TOKEN" Default="" Mode="" Description="Optional. If set, the app must send it (Settings in the app)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="API-Token" Target="API_TOKEN" Default="" Mode="" Description="Optional single token (min. 32 chars). Preferred: one token per person in tokens.txt in the data folder (./tokens.sh)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Token Pflicht" Target="REQUIRE_TOKEN" Default="__REQUIRE_TOKEN__" Mode="" Description="true: refuse to start without a valid token. Set when the API is reachable from the internet." Type="Variable" Display="always" Required="false" Mask="false">__REQUIRE_TOKEN__</Config>
+  <Config Name="Anfragen pro Minute" Target="RATE_LIMIT" Default="120" Mode="" Description="Per person" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
   <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
 </Container>

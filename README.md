@@ -45,9 +45,9 @@ Every live view shows a chip such as `Daten 42 s alt` or `Daten 3 min 05 s alt` 
 | `GET /api/v1/geocode?text=` | addresses and places |
 | `GET /api/v1/status` | data state, realtime stats, MOTIS health |
 
-Optional bearer token via `API_TOKEN`.
+Bearer token per person in `DATA/tokens.txt` (`./tokens.sh add NAME`), or a single `API_TOKEN`.
 
-**Keep the backend private.** Without `API_TOKEN` the API has no login. Run it in your LAN and reach it through a VPN, or set `API_TOKEN` and the same token in the app.
+**Without a token the API has no login.** It then answers only in the LAN/VPN and refuses requests that came through a proxy. To share the app with friends over the internet, see [docs/public-access.md](docs/public-access.md) (NetBird reverse proxy, per-person tokens, rate limits).
 
 ## Deploy
 

@@ -9,13 +9,13 @@ cd "$(dirname "$0")"
 [ -f deploy.env ] || { echo "deploy.env missing, see deploy.env.example"; exit 1; }
 source deploy.env
 : "${DEPLOY_SSH:?}" "${DEPLOY_HOST:?}"
-API_PORT=${API_PORT:-8097}; MOTIS_PORT=${MOTIS_PORT:-8098}; DATA=${DATA:-/mnt/user/appdata/takt}; MOTIS_VERSION=${MOTIS_VERSION:-2.11}
+API_PORT=${API_PORT:-8097}; MOTIS_PORT=${MOTIS_PORT:-8098}; DATA=${DATA:-/mnt/user/appdata/takt}; MOTIS_VERSION=${MOTIS_VERSION:-2.11}; REQUIRE_TOKEN=${REQUIRE_TOKEN:-false}
 RECREATE_MOTIS=0; SEED=""
 while [ $# -gt 0 ]; do case "$1" in --motis) RECREATE_MOTIS=1;; --seed) SEED="$2"; shift;; esac; shift; done
 
 render() {
   sed -e "s#__HOST__#$DEPLOY_HOST#g" -e "s#__API_PORT__#$API_PORT#g" -e "s#__MOTIS_PORT__#$MOTIS_PORT#g" \
-      -e "s#__MOTIS_VERSION__#$MOTIS_VERSION#g" -e "s#/mnt/user/appdata/takt#$DATA#g" "$1"
+      -e "s#__MOTIS_VERSION__#$MOTIS_VERSION#g" -e "s#__REQUIRE_TOKEN__#$REQUIRE_TOKEN#g" -e "s#/mnt/user/appdata/takt#$DATA#g" "$1"
 }
 
 echo "== build image"
@@ -27,7 +27,7 @@ echo "== templates + data folders"
 T=/boot/config/plugins/dockerMan/templates-user
 render unraid/my-Takt.xml | $DEPLOY_SSH "cat > $T/my-Takt.xml"
 render unraid/my-Takt-MOTIS.xml | $DEPLOY_SSH "cat > $T/my-Takt-MOTIS.xml"
-$DEPLOY_SSH "mkdir -p $DATA/motis && chown -R 99:100 $DATA"
+$DEPLOY_SSH "mkdir -p $DATA/motis && chown -R 99:100 $DATA && { [ ! -f $DATA/tokens.txt ] || chmod 600 $DATA/tokens.txt; }"
 
 if [ -n "$SEED" ]; then
   echo "== seed data from $SEED"
@@ -38,7 +38,7 @@ fi
 echo "== container Takt"
 $DEPLOY_SSH "docker rm -f Takt >/dev/null 2>&1; docker run -d --name Takt --user=99:100 --restart=unless-stopped \
   --cap-drop=ALL --security-opt=no-new-privileges --memory=4g \
-  -p $API_PORT:8080 -v $DATA:/data -e TZ=Europe/Berlin \
+  -p $API_PORT:8080 -v $DATA:/data -e TZ=Europe/Berlin -e REQUIRE_TOKEN=$REQUIRE_TOKEN \
   -e MOTIS_URL=http://$DEPLOY_HOST:$MOTIS_PORT -e SELF_URL=http://$DEPLOY_HOST:$API_PORT \
   -l net.unraid.docker.managed=dockerman -l net.unraid.docker.icon=http://$DEPLOY_HOST:$API_PORT/icon.png \
   -l 'net.unraid.docker.webui=http://[IP]:[PORT:8080]/api/v1/status' \
