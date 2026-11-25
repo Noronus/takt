@@ -202,8 +202,10 @@ class MapHolder(ctx: Context) {
         )
         // above every area and line of the base map (buildings, roads, water), below its labels:
         // the base style interleaves labels early, so "below the first label" would leave buildings on top
-        val own = setOf("st-dot", "sel-ring", "st-name")
-        val base = s.layers.filter { it.id !in own }
+        // the base map is everything below our stop dots; later layers (stops, route, the location marker,
+        // which may already be in place when the style is swapped) must stay above the images
+        val all = s.layers
+        val base = all.take(all.indexOfFirst { it.id == "st-dot" }.takeIf { it >= 0 } ?: all.size)
         val lastShape = base.lastOrNull { it !is SymbolLayer }?.id
         var anchor = lastShape
         for ((id, url, maxZoom) in sources) {
