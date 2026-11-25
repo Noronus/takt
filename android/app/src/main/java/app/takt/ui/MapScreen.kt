@@ -194,7 +194,7 @@ class MapHolder(ctx: Context) {
      */
     private fun addAerial(s: Style) {
         fun wms(base: String, layer: String) =
-            "$base?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=$layer&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE"
+            "$base?v=$AERIAL_VERSION&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=$layer&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE"
         val sources = listOf(
             Triple("aerial-th", wms("https://www.geoproxy.geoportal-th.de/geoproxy/services/DOP", "th_dop200rgb"), 17),
             Triple("aerial-st", wms("https://www.geodatenportal.sachsen-anhalt.de/wss/service/ST_LVermGeo_DOP_WMS_OpenData/guest", "lsa_lvermgeo_dop20_2"), 20),
@@ -209,10 +209,8 @@ class MapHolder(ctx: Context) {
         for ((id, url, maxZoom) in sources) {
             val ts = org.maplibre.android.style.sources.TileSet("2.2.0", url).apply { this.maxZoom = maxZoom.toFloat(); minZoom = 8f }
             s.addSource(org.maplibre.android.style.sources.RasterSource(id, ts, 256))
-            // 512 px images in 256 px tiles: sharp on high density screens; the photos are a bit flat, lift them
-            val layer = org.maplibre.android.style.layers.RasterLayer(id, id).withProperties(
-                rasterContrast(0.18f), rasterSaturation(0.25f), rasterFadeDuration(150f),
-            )
+            // 512 px images in 256 px tiles: sharp on high density screens. Colours are corrected on download (TaktApp).
+            val layer = org.maplibre.android.style.layers.RasterLayer(id, id).withProperties(rasterFadeDuration(150f))
             if (anchor != null) s.addLayerAbove(layer, anchor) else s.addLayerBelow(layer, "st-dot")
             anchor = id
         }
@@ -334,6 +332,9 @@ class MapHolder(ctx: Context) {
 }
 
 val LocalMapHolder = staticCompositionLocalOf<MapHolder> { error("no map") }
+
+/** Raise when the states publish new flights: every phone then loads the aerial tiles again once. */
+const val AERIAL_VERSION = 2
 
 /** Journey shown on the map ("Auf Karte zeigen"). Saved like the journey fields. */
 object MapRoute {

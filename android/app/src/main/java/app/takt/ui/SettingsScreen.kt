@@ -133,6 +133,20 @@ fun SettingsScreen(nav: Nav) {
             Text("Gilt für Panels, Listen und Kamerafahrten der Karte.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(24.dp))
+            Text("Kartenspeicher", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            var cacheMsg by remember { mutableStateOf<String?>(null) }
+            val ctx0 = androidx.compose.ui.platform.LocalContext.current
+            Text("Luftbilder und Kartenkacheln bleiben bis 5 GB auf dem Handy und werden nur einmal geladen.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+            OutlinedButton(onClick = {
+                org.maplibre.android.offline.OfflineManager.getInstance(ctx0).clearAmbientCache(object : org.maplibre.android.offline.OfflineManager.FileSourceCallback {
+                    override fun onSuccess() { cacheMsg = "Kartenspeicher geleert" }
+                    override fun onError(message: String) { cacheMsg = "Fehler: $message" }
+                })
+            }, modifier = Modifier.padding(top = 6.dp)) { Text("Kartenspeicher leeren") }
+            cacheMsg?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+
+            Spacer(Modifier.height(24.dp))
             Text("Sichern", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             var withToken by remember { mutableStateOf(false) }
             var backupMsg by remember { mutableStateOf<String?>(null) }
