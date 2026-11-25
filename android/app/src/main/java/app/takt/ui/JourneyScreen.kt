@@ -393,7 +393,12 @@ private fun ItineraryCard(it: Itinerary, nowS: Long, expanded: Boolean, nav: Nav
             Spacer(Modifier.height(2.dp))
             val sub = buildList {
                 if (firstTransit != null) add("${firstTransit.line} ${countdown(legStart(firstTransit), nowS)}")
-                add(if (it.transfers == 0) "direkt" else "${it.transfers} Umstieg${if (it.transfers == 1) "" else "e"}")
+                val walkOnly = it.legs.all { l -> l.mode == "walk" }
+                add(when {
+                    walkOnly -> "zu Fuß" + (it.legs.sumOf { l -> l.distance ?: 0L }.takeIf { d -> d > 0 }?.let { d -> " · " + distText(d.toInt()) } ?: "")
+                    it.transfers == 0 -> "direkt"
+                    else -> "${it.transfers} Umstieg${if (it.transfers == 1) "" else "e"}"
+                })
                 it.via?.let { v -> add("★ über ${shortName(v)}") }
                 if (first.from.t != null && first.from.rt != null && delayMin(first.from.t, first.from.rt) != 0) add("Plan ${hhmm(first.from.t)}")
             }

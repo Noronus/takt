@@ -404,6 +404,12 @@ app.get('/api/v1/plan', async (req, reply) => {
     if (r === 'busy') return reply.code(503).header('retry-after', '3').send({ error: 'Server ausgelastet, gleich nochmal versuchen' })
     let its = (r.itineraries || []).map(toItinerary)
     its = await preferTransfers(its, q, fromPlace, toPlace, time)
+    // short distances: also offer walking the whole way (MOTIS sends it apart from the transit results);
+    // first page only, earlier/later pages are about departures
+    if (!q.cursor) {
+      const walk = (r.direct || []).find((d: any) => d.legs?.length && d.legs.every((l: any) => l.mode === 'WALK') && d.duration <= 40 * 60)
+      if (walk) its = [toItinerary(walk), ...its]
+    }
     // INSA realtime for rail legs (DELFI has none for DB Regio/S-Bahn)
     if (config.insaEnabled) {
       const jobs: Promise<void>[] = []
