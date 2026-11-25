@@ -109,11 +109,18 @@ function deny(reply: FastifyReply, code: number, error: string, retryAfter?: num
   return reply.code(code).send({ error })
 }
 
+const lastSeen = new Map<string, number>()
+// "1.2.3.4 via proxy 10.0.3.5" or "10.0.1.136 direkt"
+const where = (req: FastifyRequest) => viaProxy(req) ? `${clientIp(req)} via proxy ${req.socket.remoteAddress}` : `${clientIp(req)} direkt`
+
 export async function authHook(req: FastifyRequest, reply: FastifyReply) {
   const proxied = viaProxy(req)
   const isApi = req.url.startsWith('/api/')
   // from the internet only the app API exists; /rt/*.pb and /icon.png are for MOTIS and Unraid in the LAN
-  if (proxied && !isApi) return deny(reply, 404, 'not found')
+  if (proxied && !isApi) {
+    console.log(`[proxy] 404 ${where(req)} ${req.method} ${req.url.split('?')[0].slice(0, 80)}`)
+    return deny(reply, 404, 'not found')
+  }
   if (!isApi) return
 
   // no tokens configured: open in the LAN only, never through the proxy
@@ -131,11 +138,16 @@ export async function authHook(req: FastifyRequest, reply: FastifyReply) {
     // so someone who first tried without a token is not locked out after entering it
     if (failed.blocked(ip)) return deny(reply, 429, 'zu viele Fehlversuche', failed.retryAfter(ip))
     failed.hit(ip)
-    console.log(`[auth] abgelehnt: ${ip} ${req.method} ${req.url.split('?')[0]}`)
+    console.log(`[auth] abgelehnt: ${where(req)} ${req.method} ${req.url.split('?')[0].slice(0, 80)}`)
     return deny(reply, 401, 'token')
   }
   if (perUser.hit(name)) return deny(reply, 429, 'zu viele Anfragen', perUser.retryAfter(name))
   req.user = name
+  // one line per person and hour, so it is visible who uses it and by which path
+  if ((lastSeen.get(name) ?? 0) < Date.now() - 3600_000) {
+    lastSeen.set(name, Date.now())
+    console.log(`[auth] aktiv: ${name} von ${where(req)}`)
+  }
 }
 
 export async function headersHook(_req: FastifyRequest, reply: FastifyReply) {
