@@ -24,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -135,16 +136,43 @@ fun SettingsScreen(nav: Nav) {
             Spacer(Modifier.height(24.dp))
             Text("Kartenspeicher", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             var cacheMsg by remember { mutableStateOf<String?>(null) }
+            var confirmClear by remember { mutableStateOf(false) }
             val ctx0 = androidx.compose.ui.platform.LocalContext.current
-            Text("Luftbilder und Kartenkacheln bleiben bis 5 GB auf dem Handy und werden nur einmal geladen.",
+            // MapLibre keeps tiles in one SQLite file; its size is what the phone really spends
+            var cacheBytes by remember { mutableStateOf<Long?>(null) }
+            fun measure() {
+                val dir = java.io.File(org.maplibre.android.storage.FileSource.getResourcesCachePath(ctx0))
+                cacheBytes = (dir.listFiles { f -> f.name.startsWith("mbgl-offline.db") }?.sumOf { it.length() } ?: 0L)
+            }
+            LaunchedEffect(Unit) { measure() }
+            val used = cacheBytes?.let { sizeText(it) } ?: "…"
+            Text("Luftbilder und Kartenkacheln bleiben bis 5 GB auf dem Handy und werden nur einmal geladen. Belegt: $used",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
-            OutlinedButton(onClick = {
-                org.maplibre.android.offline.OfflineManager.getInstance(ctx0).clearAmbientCache(object : org.maplibre.android.offline.OfflineManager.FileSourceCallback {
-                    override fun onSuccess() { cacheMsg = "Kartenspeicher geleert" }
-                    override fun onError(message: String) { cacheMsg = "Fehler: $message" }
-                })
-            }, modifier = Modifier.padding(top = 6.dp)) { Text("Kartenspeicher leeren") }
+            OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.padding(top = 6.dp)) { Text("Kartenspeicher leeren ($used)") }
             cacheMsg?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+            if (confirmClear) androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("Kartenspeicher leeren?") },
+                text = { Text("$used werden gelöscht. Luftbilder und Kartenkacheln werden beim nächsten Ansehen neu geladen.") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        confirmClear = false
+                        cacheMsg = "wird geleert …"
+                        val om = org.maplibre.android.offline.OfflineManager.getInstance(ctx0)
+                        om.clearAmbientCache(object : org.maplibre.android.offline.OfflineManager.FileSourceCallback {
+                            override fun onSuccess() {
+                                // deleting rows does not shrink the file; compact it so the space is really free
+                                om.packDatabase(object : org.maplibre.android.offline.OfflineManager.FileSourceCallback {
+                                    override fun onSuccess() { measure(); cacheMsg = "Kartenspeicher geleert" }
+                                    override fun onError(message: String) { measure(); cacheMsg = "Geleert, Verkleinern fehlgeschlagen: $message" }
+                                })
+                            }
+                            override fun onError(message: String) { cacheMsg = "Fehler: $message" }
+                        })
+                    }) { Text("Leeren") }
+                },
+                dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmClear = false }) { Text("Abbrechen") } },
+            )
 
             Spacer(Modifier.height(24.dp))
             Text("Sichern", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -189,4 +217,10 @@ fun SettingsScreen(nav: Nav) {
             )
         }
     }
+}
+
+private fun sizeText(b: Long): String = when {
+    b >= 1L shl 30 -> "%.1f GB".format(b / (1024.0 * 1024 * 1024))
+    b >= 1L shl 20 -> "%d MB".format(b shr 20)
+    else -> "%d KB".format(b shr 10)
 }
