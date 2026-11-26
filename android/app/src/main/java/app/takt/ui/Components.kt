@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Train
 import androidx.compose.material.icons.filled.Tram
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -345,9 +346,12 @@ fun RouteCard(
 @Composable
 private fun RouteLine(start: Boolean, value: String?, hint: String, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickableRow(onClick).padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (start) Box(Modifier.size(12.dp).clip(CircleShape).border(3.dp, MaterialTheme.colorScheme.primary, CircleShape))
-        else Box(Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.onSurface))
-        Spacer(Modifier.width(16.dp))
+        // same marks as the start/destination buttons in the nearby list: ring for the start, pin for the destination
+        Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+            if (start) Box(Modifier.size(12.dp).clip(CircleShape).border(3.dp, MaterialTheme.colorScheme.primary, CircleShape))
+            else Icon(Icons.Rounded.Place, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(10.dp))
         Text(
             value ?: hint, maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = if (value != null) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
