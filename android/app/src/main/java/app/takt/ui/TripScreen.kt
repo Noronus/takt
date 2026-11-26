@@ -44,8 +44,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
+/** Stops of a trip with realtime, refreshed every 30 s while shown. */
 @Composable
-fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
+fun rememberTrip(tripId: String): Live<TripResponse> {
     val app = TaktApp.instance
     val live = remember(tripId) { Live<TripResponse>() }
     LaunchedEffect(tripId) {
@@ -57,14 +58,44 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
             delay(30_000)
         }
     }
+    return live
+}
+
+@Composable
+fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
+    val live = rememberTrip(tripId)
+    // top bar outside the list: back and data age stay visible while scrolling the stops
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") }
+        Spacer(Modifier.weight(1f))
+        AgeChip(live.data, live.loading, live.error, compact = true)
+    }
+    // room below the last stop, so a stop near the end of the line can still scroll to the top
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val tail = (maxHeight - 200.dp).coerceAtLeast(32.dp)
+        TripStops(tripId, live, line, at, onStop = nav::station, modifier = Modifier.fillMaxSize(), tail = tail)
+    }
+    }
+}
+
+/**
+ * The stop list of a trip with its timeline (full screen and in the map panel). Opens once at the stop it came
+ * from ([at]) or where the vehicle is; later refreshes do not move it. [big] shows line and direction on top.
+ */
+@Composable
+fun TripStops(
+    tripId: String, live: Live<TripResponse>, line: String, at: String?, onStop: (String) -> Unit,
+    modifier: Modifier = Modifier, tail: androidx.compose.ui.unit.Dp = 0.dp, big: Boolean = true,
+    flingBehavior: androidx.compose.foundation.gestures.FlingBehavior? = null,
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
+) {
     val t = live.data?.value
     val now = nowMs() / 1000
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val stopsNow = t?.stops.orEmpty()
     // next stop the vehicle leaves (realtime if known): while it waits at a stop, that stop; the one before is where it last was
     fun stopTime(s: app.takt.data.TripStop) = (s.dep ?: s.arr)?.let { it.rt ?: it.t }
     val next = stopsNow.indexOfFirst { s -> (stopTime(s) ?: 0) >= now }.let { if (it < 0) stopsNow.size else it }
-    // open once at the stop it came from, or where the vehicle is; later refreshes do not move the list
     var scrolled by remember(tripId) { mutableStateOf(false) }
     LaunchedEffect(t != null) {
         if (t == null || scrolled) return@LaunchedEffect
@@ -81,24 +112,18 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
         }
     }
     val accent = parseColor(t?.color) ?: t?.mode?.let(::modeColor)?.takeIf { t.mode != "other" } ?: MaterialTheme.colorScheme.primary
-    // top bar outside the list: back and data age stay visible while scrolling the stops
-    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().statusBarsPadding()) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück") }
-        Spacer(Modifier.weight(1f))
-        AgeChip(live.data, live.loading, live.error, compact = true)
-    }
-    // room below the last stop, so a stop near the end of the line can still scroll to the top
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-    val tail = (maxHeight - 200.dp).coerceAtLeast(32.dp)
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = tail)) {
+    val bg = if (big) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface
+    LazyColumn(modifier, state = listState, contentPadding = PaddingValues(bottom = tail),
+        flingBehavior = flingBehavior ?: androidx.compose.foundation.gestures.ScrollableDefaults.flingBehavior()) {
         item {
-            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                LineBadge(t?.line ?: line, t?.mode ?: "other", t?.color)
-                Spacer(Modifier.width(12.dp))
-                Text(t?.dir ?: "", style = MaterialTheme.typography.headlineSmall)
+            if (big) {
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LineBadge(t?.line ?: line, t?.mode ?: "other", t?.color)
+                    Spacer(Modifier.width(12.dp))
+                    Text(t?.dir ?: "", style = MaterialTheme.typography.headlineSmall)
+                }
+                Spacer(Modifier.height(10.dp))
             }
-            Spacer(Modifier.height(10.dp))
             ErrorLine(live.error)
             if (t != null && !t.realtime) Text("Keine Echtzeit für diese Fahrt – Soll-Fahrplan.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (t?.cancelled == true) Text("Diese Fahrt fällt aus.", Modifier.padding(horizontal = 20.dp), color = Palette.bad, style = MaterialTheme.typography.titleSmall)
@@ -109,7 +134,7 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
             val time = tp?.rt ?: tp?.t
             val past = time != null && time < now - 30
             val color = if (past) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
-            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clickableRow { s.station?.let(nav::station) }.padding(horizontal = 20.dp)) {
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clickableRow { s.station?.let(onStop) }.padding(horizontal = 20.dp)) {
                 Column(Modifier.widthIn(min = 58.dp).padding(vertical = 10.dp)) {
                     Text(hhmm(time), style = MaterialTheme.typography.titleSmall.merge(Tnum), color = color, textDecoration = if (s.cancelled) TextDecoration.LineThrough else null)
                     if (tp?.t != null && tp.rt != null) DelayChip(tp.t, tp.rt, s.cancelled, true)
@@ -119,8 +144,8 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
                     Column(Modifier.fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.width(3.dp).weight(1f).background(if (i == 0) androidx.compose.ui.graphics.Color.Transparent else accent.copy(alpha = if (past) 0.35f else 1f)))
                         // the vehicle: a filled dot on its next stop (or at the stop while it waits there)
-                        if (i == next && t?.cancelled != true && next < stops.size) Box(Modifier.size(16.dp).clip(CircleShape).background(accent).border(2.dp, MaterialTheme.colorScheme.background, CircleShape))
-                        else Box(Modifier.size(12.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).border(3.dp, accent.copy(alpha = if (past) 0.35f else 1f), CircleShape))
+                        if (i == next && t?.cancelled != true && next < stops.size) Box(Modifier.size(16.dp).clip(CircleShape).background(accent).border(2.dp, bg, CircleShape))
+                        else Box(Modifier.size(12.dp).clip(CircleShape).background(bg).border(3.dp, accent.copy(alpha = if (past) 0.35f else 1f), CircleShape))
                         Box(Modifier.width(3.dp).weight(1f).background(if (i == stops.size - 1) androidx.compose.ui.graphics.Color.Transparent else accent.copy(alpha = if (past) 0.35f else 1f)))
                     }
                 }
@@ -133,7 +158,5 @@ fun TripScreen(tripId: String, line: String, at: String?, nav: Nav) {
                 }
             }
         }
-    }
-    }
     }
 }
