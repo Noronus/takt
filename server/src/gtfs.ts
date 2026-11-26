@@ -99,7 +99,11 @@ export interface Station {
   modes: number
   stopIds: string[]     // all MOTIS stop ids (merged duplicates, both datasets); children are resolved by MOTIS
   deps: number
+  plats: Platform[]     // where the vehicles actually stop; the map shows them one by one when zoomed in
 }
+
+// one stopping point of a station: [lat, lon, platform code, modes, MOTIS stop ids]
+export type Platform = [number, number, string, number, string[]]
 
 export interface FilterResult { trips: number, stops: number, stations: Station[], tripIds: Set<string> }
 
@@ -116,14 +120,14 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
 
   // stops: which are in the area
   log('stops.txt lesen')
-  type S = { name: string, lat: number, lon: number, parent: string, raw: string }
+  type S = { name: string, lat: number, lon: number, parent: string, code: string, raw: string }
   const stops = new Map<string, S>()
   const boxStops = new Set<string>()
   let stopsHeader = ''
   for await (const { h, r, raw } of rows(srcZip, 'stops.txt')) {
     if (!r.length) { stopsHeader = raw; continue }
     const id = r[h.stop_id], lat = Number(r[h.stop_lat]), lon = Number(r[h.stop_lon])
-    stops.set(id, { name: r[h.stop_name], lat, lon, parent: r[h.parent_station] || '', raw })
+    stops.set(id, { name: r[h.stop_name], lat, lon, parent: r[h.parent_station] || '', code: r[h.platform_code] || '', raw })
     if (inBox(lat, lon)) boxStops.add(id)
   }
 
@@ -234,6 +238,7 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
   // ---------- stations ----------
   log('Haltestellenliste bauen')
   const st2 = new Map<string, Station>()
+  const plats = new Map<string, Map<string, Platform>>()   // station key -> stop id -> platform
   for (const id of usedStops) {
     const s = stops.get(id)
     if (!s) continue
@@ -241,12 +246,16 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
     const base = stops.get(key)!
     let x = st2.get(key)
     if (!x) {
-      x = { id: `${tag}_${key}`, name: base.name, lat: base.lat, lon: base.lon, modes: 0, stopIds: [`${tag}_${key}`], deps: 0 }
+      x = { id: `${tag}_${key}`, name: base.name, lat: base.lat, lon: base.lon, modes: 0, stopIds: [`${tag}_${key}`], deps: 0, plats: [] }
       st2.set(key, x)
+      plats.set(key, new Map())
     }
     x.modes |= stopModes.get(id) || 0
     x.deps += stopDeps.get(id) || 0
+    // only stops with departures are platforms (the parent itself has none when it has children)
+    if (stopDeps.get(id)) plats.get(key)!.set(id, [s.lat, s.lon, s.code, stopModes.get(id) || 0, [`${tag}_${id}`]])
   }
+  for (const [key, x] of st2) x.plats = [...plats.get(key)!.values()]
   const stations = [...st2.values()].filter(s => s.deps > 0 && inBox(s.lat, s.lon))
   log(`${stations.length} Haltestellen in ${tag}`)
   return { trips: keptTrips.size, stops: usedStops.size, stations, tripIds: keptTrips }
@@ -284,9 +293,26 @@ export function mergeDuplicates(list: Station[]): Station[] {
         m.stopIds.push(...s.stopIds)
         m.modes |= s.modes
         m.deps += s.deps
-      } else done.push({ ...s, stopIds: [...s.stopIds] })
+        m.plats.push(...s.plats)
+      } else done.push({ ...s, stopIds: [...s.stopIds], plats: [...s.plats] })
     }
     out.push(...done)
+  }
+  return out
+}
+
+// platforms closer than this are drawn as one point (e.g. a tram and a bus stop on the same island)
+const PLATFORM_MERGE_M = 8
+
+function platforms(list: Platform[]): Platform[] {
+  const out: Platform[] = []
+  for (const [lat, lon, code, modes, ids] of list) {
+    const near = out.find(o => dist({ lat: o[0], lon: o[1] }, { lat, lon }) < PLATFORM_MERGE_M)
+    if (near) {
+      near[3] |= modes
+      near[4].push(...ids)
+      if (code && !near[2].split('/').includes(code)) near[2] = near[2] ? `${near[2]}/${code}` : code
+    } else out.push([+lat.toFixed(5), +lon.toFixed(5), code, modes, [...ids]])
   }
   return out
 }
@@ -294,7 +320,13 @@ export function mergeDuplicates(list: Station[]): Station[] {
 export function stationsJson(stations: Station[]) {
   const list = stations
     .sort((a, b) => b.deps - a.deps)
-    .map(s => [s.id, s.name, +s.lat.toFixed(5), +s.lon.toFixed(5), s.modes, s.stopIds.length > 1 ? s.stopIds : undefined, s.deps])
+    .map(s => {
+      const row: unknown[] = [s.id, s.name, +s.lat.toFixed(5), +s.lon.toFixed(5), s.modes, s.stopIds.length > 1 ? s.stopIds : null, s.deps]
+      // platforms only where there is more than one place to stand (old apps ignore this field)
+      const p = platforms(s.plats)
+      if (p.length > 1) row.push(p)
+      return row
+    })
   const body = JSON.stringify(list)
   const version = createHash('sha1').update(body).digest('hex').slice(0, 12)
   return { version, json: `{"version":"${version}","generated":"${new Date().toISOString()}","stations":${body}}` }

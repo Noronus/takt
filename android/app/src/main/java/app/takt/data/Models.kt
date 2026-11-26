@@ -22,7 +22,13 @@ data class Dep(
     val src: String? = null,
     val notes: List<String> = emptyList(),
     val info: List<String> = emptyList(),
+    /** Platform (MOTIS stop id) it leaves from. */
+    val stopId: String? = null,
 )
+
+/** Next departure per platform: stations[stationId][platformStopId]. */
+@Serializable data class NextDep(val line: String = "", val mode: String = "other", val color: String? = null, val t: Long = 0, val rt: Long? = null)
+@Serializable data class NextResponse(val now: Long = 0, val stations: Map<String, Map<String, NextDep>> = emptyMap())
 
 @Serializable
 data class DeparturesResponse(

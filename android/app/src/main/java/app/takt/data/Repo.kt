@@ -15,9 +15,13 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
 
     private data class Wrap(val at: Long, val body: String)
 
-    fun cachedDepartures(station: String): Timed<DeparturesResponse>? {
-        mem[station]?.let { return it }
-        val f = File(dir, "$station.json")
+    /** Cache key: the station, or one platform of it ([stops] = its MOTIS stop ids, comma separated). */
+    private fun key(station: String, stops: String?) = if (stops == null) station else "$station~${stops.hashCode().toUInt()}"
+
+    fun cachedDepartures(station: String, stops: String? = null): Timed<DeparturesResponse>? {
+        val k = key(station, stops)
+        mem[k]?.let { return it }
+        val f = File(dir, "$k.json")
         if (!f.exists()) return null
         return runCatching {
             val lines = f.readText().split('\n', limit = 2)
@@ -26,16 +30,17 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
         }.getOrNull()
     }
 
-    suspend fun departures(station: String, n: Int = 40): Timed<DeparturesResponse> {
+    suspend fun departures(station: String, n: Int = 40, stops: String? = null): Timed<DeparturesResponse> {
         // start the list earlier when departures of the last minutes should stay visible
         val past = prefs.pastMin
         val from = if (past > 0) (System.currentTimeMillis() / 1000 - past * 60L).toString() else null
-        val (body, _) = api.get("/api/v1/departures", mapOf("station" to station, "n" to n.toString(), "time" to from))
+        val (body, _) = api.get("/api/v1/departures", mapOf("station" to station, "n" to n.toString(), "time" to from, "stops" to stops))
         val now = System.currentTimeMillis()
         val r = withContext(Dispatchers.Default) { api.json.decodeFromString(DeparturesResponse.serializer(), body ?: throw ApiException("leere Antwort")) }
         val t = Timed(r, now, if (r.source == "motis") r.rt.feedAge else 0)
-        mem[station] = t
-        withContext(Dispatchers.IO) { runCatching { File(dir, "$station.json").writeText("$now\n$body") } }
+        val k = key(station, stops)
+        mem[k] = t
+        withContext(Dispatchers.IO) { runCatching { File(dir, "$k.json").writeText("$now\n$body") } }
         return t
     }
 
@@ -57,6 +62,10 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
     /** Running vehicles in a box ("lat,lon"); one try only, the map asks again soon anyway. */
     suspend fun vehicles(min: String, max: String, zoom: Int): VehiclesResponse =
         api.getJson("/api/v1/vehicles", mapOf("min" to min, "max" to max, "zoom" to zoom.toString()), attempts = 1)
+
+    /** Next line per platform of up to 40 stations, for the platform dots; one try only, the map asks again soon. */
+    suspend fun next(stations: List<String>): NextResponse =
+        api.getJson("/api/v1/next", mapOf("stations" to stations.joinToString(",")), attempts = 1)
 
     suspend fun alerts(): Timed<AlertsResponse> {
         val r: AlertsResponse = api.getJson("/api/v1/alerts")

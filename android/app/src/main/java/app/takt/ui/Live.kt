@@ -34,16 +34,16 @@ class Live<T> {
  * [intervalMs] while the screen is visible. Never blocks the UI.
  */
 @Composable
-fun rememberDepartures(station: String, intervalMs: Long = 20_000): Pair<Live<DeparturesResponse>, () -> Unit> {
+fun rememberDepartures(station: String, intervalMs: Long = 20_000, stops: String? = null): Pair<Live<DeparturesResponse>, () -> Unit> {
     val repo = TaktApp.instance.repo
-    val live = remember(station) { Live<DeparturesResponse>().also { it.data = repo.cachedDepartures(station) } }
+    val live = remember(station, stops) { Live<DeparturesResponse>().also { it.data = repo.cachedDepartures(station, stops) } }
     val scope = rememberCoroutineScope()
-    var job by remember(station) { mutableStateOf<Job?>(null) }
+    var job by remember(station, stops) { mutableStateOf<Job?>(null) }
     val load: () -> Unit = {
         if (job?.isActive != true) job = scope.launch {
             live.loading = true
             try {
-                live.data = repo.departures(station)
+                live.data = repo.departures(station, stops = stops)
                 live.error = null
             } catch (e: CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Takt", "departures $station", e)
@@ -52,7 +52,7 @@ fun rememberDepartures(station: String, intervalMs: Long = 20_000): Pair<Live<De
         }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(station) {
+    LaunchedEffect(station, stops) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 load()

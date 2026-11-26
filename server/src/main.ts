@@ -63,6 +63,7 @@ interface Dep {
   trip: string; line: string; mode: AppMode; color: string | null; textColor: string | null
   dir: string; t: number; rt: number | null; cancelled: boolean
   track: string | null; plannedTrack: string | null; stop: string; src: 'delfi' | 'insa' | null
+  stopId: string | null   // MOTIS id of the platform it leaves from (matches the platform ids in stations.json)
   notes: string[]
   info: string[]
 }
@@ -94,6 +95,7 @@ function fromStopTime(s: any): Dep {
     plannedTrack: p.scheduledTrack || null,
     stop: p.name || '',
     src: s.realTime ? 'delfi' : null,
+    stopId: p.stopId || null,
     notes: alertTexts(p.alerts),
     info: infoTexts(p.alerts),
   }
@@ -139,7 +141,7 @@ async function insaFallback(st: Station, from: Date, minutes: number): Promise<D
     return {
       trip: d.tripId, line: d.line.replace(/^(Str|Bus)\s+/, ''), mode, color: null, textColor: null, dir: d.direction,
       t: d.planned, rt: d.when ?? (d.delay !== null ? d.planned + d.delay : null), cancelled: d.cancelled,
-      track: d.platform, plannedTrack: d.plannedPlatform, stop: st.name, src: d.delay !== null || d.cancelled ? 'insa' : null, notes: d.remarks, info: [],
+      track: d.platform, plannedTrack: d.plannedPlatform, stop: st.name, src: d.delay !== null || d.cancelled ? 'insa' : null, notes: d.remarks, info: [], stopId: null,
     }
   })
 }
@@ -228,6 +230,51 @@ app.get('/api/v1/stations', async (req, reply) => {
   return reply.type('application/json').send(stationsBody)
 })
 
+async function stationDeps(st: Station, time: Date, n: number): Promise<Dep[]> {
+  const seen = new Set<string>()
+  const deps: Dep[] = []
+  const results = await Promise.all(st.stopIds.map(id => motis('/api/v6/stoptimes', {
+    stopId: id, time: time.toISOString(), n, window: 5400, language: 'de',
+  })))
+  for (const r of results) for (const s of r.stopTimes || []) {
+    const d = fromStopTime(s)
+    const k = `${d.trip}|${d.t}`
+    if (seen.has(k)) continue
+    seen.add(k); deps.push(d)
+  }
+  return deps
+}
+
+// next line per platform, for the platform dots on the map: { stationId: { platformStopId: {line, mode, color, ...} } }
+const nextCache = new Map<string, { at: number, body: Record<string, any> }>()
+app.get('/api/v1/next', async (req, reply) => {
+  const q = req.query as Record<string, string>
+  const ids = typeof q.stations === 'string' ? q.stations.split(',') : []
+  if (!ids.length || ids.length > 40 || !ids.every(x => ID.test(x))) return badRequest(reply, 'stations')
+  const now = Math.round(Date.now() / 1000)
+  const out: Record<string, Record<string, any>> = {}
+  await Promise.all(ids.map(async id => {
+    const st = stations.get(id)
+    if (!st) return
+    const c = nextCache.get(id)
+    if (c && Date.now() - c.at < 20_000) { out[id] = c.body; return }
+    try {
+      const deps = (await stationDeps(st, new Date((now - 60) * 1000), 40))
+        .filter(d => !d.cancelled && (d.rt ?? d.t) >= now - 30)
+        .sort((a, b) => (a.rt ?? a.t) - (b.rt ?? b.t))
+      const body: Record<string, any> = {}
+      for (const d of deps) if (d.stopId && !body[d.stopId])
+        body[d.stopId] = { line: d.line, mode: d.mode, color: d.color, textColor: d.textColor, t: d.t, rt: d.rt }
+      nextCache.set(id, { at: Date.now(), body })
+      out[id] = body
+    } catch (e: any) {
+      console.log(`[api] next ${id}: ${e.message}`)
+    }
+  }))
+  if (nextCache.size > 3000) for (const [k, v] of nextCache) if (Date.now() - v.at > 60_000) nextCache.delete(k)
+  return { now, stations: out }
+})
+
 app.get('/api/v1/departures', async (req, reply) => {
   const q = req.query as Record<string, string>
   const st = typeof q.station === 'string' ? stations.get(q.station) : undefined
@@ -236,19 +283,18 @@ app.get('/api/v1/departures', async (req, reply) => {
   if (t === null) return badRequest(reply, 'time')
   const time = t ?? new Date()
   const n = Math.max(1, Math.min(80, Math.floor(Number(q.n)) || 40))
+  // optional: only the departures of some platforms of this station (MOTIS ids, comma separated)
+  let only: Set<string> | null = null
+  if (q.stops !== undefined) {
+    const ids = typeof q.stops === 'string' ? q.stops.split(',') : []
+    if (!ids.length || ids.length > 20 || !ids.every(x => ID.test(x))) return badRequest(reply, 'stops')
+    only = new Set(ids)
+  }
   const now = Math.round(Date.now() / 1000)
   try {
-    const seen = new Set<string>()
-    const deps: Dep[] = []
-    const results = await Promise.all(st.stopIds.map(id => motis('/api/v6/stoptimes', {
-      stopId: id, time: time.toISOString(), n, window: 5400, language: 'de',
-    })))
-    for (const r of results) for (const s of r.stopTimes || []) {
-      const d = fromStopTime(s)
-      const k = `${d.trip}|${d.t}`
-      if (seen.has(k)) continue
-      seen.add(k); deps.push(d)
-    }
+    // MOTIS always answers for the whole station, so a platform filter needs more rows to keep n
+    let deps = await stationDeps(st, time, only ? 80 : n)
+    if (only) deps = deps.filter(d => d.stopId && only.has(d.stopId))
     await enrichRail(st, deps)
     deps.sort((a, b) => (a.rt ?? a.t) - (b.rt ?? b.t))
     return { station: { id: st.id, name: st.name }, now, source: 'motis', rt: rtInfo(), departures: deps.slice(0, n) }
@@ -256,7 +302,8 @@ app.get('/api/v1/departures', async (req, reply) => {
     console.log(`[api] departures: ${e.message}`)
     if (!config.insaEnabled) return reply.code(502).send({ error: 'MOTIS nicht erreichbar' })
     try {
-      const deps = await insaFallback(st, time, 90)
+      // INSA does not know the platforms: with a platform filter it cannot answer
+      const deps = only ? [] : await insaFallback(st, time, 90)
       return { station: { id: st.id, name: st.name }, now, source: 'insa', rt: rtInfo(), departures: deps.slice(0, n) }
     } catch (e2: any) {
       console.log(`[api] departures insa: ${e2.message}`)

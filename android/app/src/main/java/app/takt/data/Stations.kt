@@ -38,11 +38,19 @@ data class Station(
     val lon: Double,
     val modes: Int,
     val rank: Int,
+    /** Single stopping points (platforms) of the station; empty when there is only one. */
+    val plats: List<Platform> = emptyList(),
 ) {
     /** Normalized name for search; computed on first search, not at startup. */
     val key: String by lazy(LazyThreadSafetyMode.NONE) { Stations.norm(name) }
     /** Name without the city prefix "Leipzig, ". */
     val shortName: String = name.removePrefix("Leipzig, ").removeSuffix(", Leipzig")
+}
+
+/** One stopping point of a station; [code] is the platform label ("2", "1/3") or empty, [ids] its MOTIS stop ids. */
+data class Platform(val lat: Double, val lon: Double, val code: String, val modes: Int, val ids: List<String>) {
+    /** Key for the server's platform filter and for map features. */
+    val key: String get() = ids.joinToString(",")
 }
 
 data class Nearby(val station: Station, val meters: Int)
@@ -97,6 +105,11 @@ class Stations(private val ctx: Context, private val api: Api) {
                 lon = a[3].jsonPrimitive.double,
                 modes = a[4].jsonPrimitive.int,
                 rank = i,
+                plats = (a.getOrNull(7) as? JsonArray)?.map { p ->
+                    val q = p as JsonArray
+                    Platform(q[0].jsonPrimitive.double, q[1].jsonPrimitive.double, q[2].jsonPrimitive.content, q[3].jsonPrimitive.int,
+                        (q.getOrNull(4) as? JsonArray)?.map { it.jsonPrimitive.content } ?: emptyList())
+                } ?: emptyList(),
             )
         }
         byId = out.associateBy { it.id }
@@ -111,22 +124,34 @@ class Stations(private val ctx: Context, private val api: Api) {
         }
     }
 
-    val geoFile = File(ctx.filesDir, "stations.geojson")
-    private val geoVersionFile = File(ctx.filesDir, "stations.geojson.version")
+    // "3": format with platform points and their stop ids; a new name makes older cached files unused
+    val geoFile = File(ctx.filesDir, "stations3.geojson")
+    private val geoVersionFile = File(ctx.filesDir, "stations3.geojson.version")
     /** Version of the GeoJSON file the map can load directly, or null if there is none yet. */
     fun geoFileVersion(): String? = geoVersionFile.takeIf { it.exists() && geoFile.exists() }?.readText()
 
     private fun buildGeoJson(list: List<Station>): String {
-        val sb = StringBuilder(list.size * 130)
+        val sb = StringBuilder(list.size * 160)
         sb.append("{\"type\":\"FeatureCollection\",\"features\":[")
+        val big = { m: Int -> if (m and (Modes.TRAM or Modes.SUBURBAN or Modes.RAIL) != 0) 1 else 0 }
         list.forEachIndexed { i, s ->
             if (i > 0) sb.append(',')
-            val big = if (s.modes and (Modes.TRAM or Modes.SUBURBAN or Modes.RAIL) != 0) 1 else 0
+            val id = Json.encodeToString(String.serializer(), s.id)
+            // "pl": the station has platform points; the map then shows those instead of the station dot when zoomed in
             sb.append("{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
                 .append(s.lon).append(',').append(s.lat).append("]},\"properties\":{\"id\":")
-                .append(Json.encodeToString(String.serializer(), s.id)).append(",\"name\":")
+                .append(id).append(",\"name\":")
                 .append(Json.encodeToString(String.serializer(), s.shortName)).append(",\"c\":\"")
-                .append(stationColor(s.modes)).append("\",\"big\":").append(big).append(",\"r\":").append(s.rank).append("}}")
+                .append(stationColor(s.modes)).append("\",\"big\":").append(big(s.modes)).append(",\"r\":").append(s.rank)
+                .append(",\"pl\":").append(if (s.plats.isNotEmpty()) 1 else 0).append("}}")
+            for (p in s.plats) {
+                sb.append(",{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[")
+                    .append(p.lon).append(',').append(p.lat).append("]},\"properties\":{\"id\":")
+                    .append(id).append(",\"plat\":1,\"pk\":")
+                    .append(Json.encodeToString(String.serializer(), p.key)).append(",\"code\":")
+                    .append(Json.encodeToString(String.serializer(), p.code)).append(",\"c\":\"")
+                    .append(stationColor(p.modes)).append("\",\"big\":").append(big(p.modes)).append("}}")
+            }
         }
         sb.append("]}")
         return sb.toString()

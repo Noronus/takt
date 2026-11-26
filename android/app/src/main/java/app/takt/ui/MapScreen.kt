@@ -91,6 +91,8 @@ class MapHolder(ctx: Context) {
     private var styleDark: Boolean? = null
     private var styleSat: Boolean? = null
     var onStationClick: (String?) -> Unit = {}
+    /** A platform dot was tapped: station id and the platform key (its stop ids). */
+    var onPlatformClick: (String, String) -> Unit = { _, _ -> }
     var onVehicleClick: (trip: String, line: String) -> Unit = { _, _ -> }
     private var stationsLoaded = false
     /** Map is shown once stations are in it (or after a timeout), so tiles and stops appear together. */
@@ -118,13 +120,15 @@ class MapHolder(ctx: Context) {
                     if (!trip.isNullOrBlank()) { onVehicleClick(trip, f.getStringProperty("line") ?: ""); return@addOnMapClickListener true }
                 }
                 val r = 30f
-                val hit = m.queryRenderedFeatures(RectF(p.x - r, p.y - r, p.x + r, p.y + r), "st-dot")
+                val hit = m.queryRenderedFeatures(RectF(p.x - r, p.y - r, p.x + r, p.y + r), "st-dot", "pl-dot")
                 val best = hit.minByOrNull {
                     val pt = it.geometry() as Point
                     val sp = m.projection.toScreenLocation(LatLng(pt.latitude(), pt.longitude()))
                     (sp.x - p.x) * (sp.x - p.x) + (sp.y - p.y) * (sp.y - p.y)
                 }
-                onStationClick(best?.getStringProperty("id"))
+                val pk = best?.takeIf { it.hasProperty("plat") }?.getStringProperty("pk")
+                if (best != null && pk != null) onPlatformClick(best.getStringProperty("id"), pk)
+                else onStationClick(best?.getStringProperty("id"))
                 true
             }
             map = m
@@ -137,6 +141,15 @@ class MapHolder(ctx: Context) {
     /** Sets the base style (bundled, no network round trip) together with the station layers. */
     // points only: tiling to z14 is enough, MapLibre overzooms above that
     private val geoOpts = org.maplibre.android.style.sources.GeoJsonOptions().withMaxZoom(14).withBuffer(32).withTolerance(0f)
+
+    /** From this zoom on, stations with several platforms show one dot per platform instead of one for the station. */
+    val PLAT_ZOOM = 16f
+
+    /** Dot size of stations and platforms ("big" = rail or tram). */
+    private fun dotRadius() = interpolate(linear(), zoom(),
+        stop(10, sum(literal(1.6), product(literal(1.2), get("big")))),
+        stop(14, sum(literal(4.5), product(literal(2), get("big")))),
+        stop(17, sum(literal(8), product(literal(2), get("big")))))
 
     /** Station data version currently in the map source. */
     var shownVersion: String? = null
@@ -158,15 +171,31 @@ class MapHolder(ctx: Context) {
         val b = Style.Builder().fromUri(if (dark) "asset://style-dark.json" else "asset://style-positron.json")
             .withSource(source)
             .withSource(GeoJsonSource("sel"))
+            .withSource(GeoJsonSource("pl-live"))
             .withLayer(CircleLayer("st-dot", "stations").withProperties(
                 circleColor(toColor(get("c"))),
-                circleRadius(interpolate(linear(), zoom(),
-                    stop(10, sum(literal(1.6), product(literal(1.2), get("big")))),
-                    stop(14, sum(literal(4.5), product(literal(2), get("big")))),
-                    stop(17, sum(literal(8), product(literal(2), get("big")))))),
+                circleRadius(dotRadius()),
                 circleStrokeColor(stroke),
                 circleStrokeWidth(interpolate(linear(), zoom(), stop(10, 0.5f), stop(15, 2f))),
-            ).apply { minZoom = 9.5f })
+            ).apply {
+                minZoom = 9.5f
+                // zoomed in, a station with platforms is drawn by its platforms (filter zoom is the whole tile zoom, so PLAT_ZOOM is whole too)
+                setFilter(all(not(has("plat")), any(eq(get("pl"), 0), lt(zoom(), PLAT_ZOOM))))
+            })
+            .withLayer(CircleLayer("pl-dot", "stations").withProperties(
+                circleColor(toColor(get("c"))),
+                circleRadius(dotRadius()),
+                circleStrokeColor(stroke),
+                circleStrokeWidth(interpolate(linear(), zoom(), stop(10, 0.5f), stop(15, 2f))),
+            ).apply { minZoom = PLAT_ZOOM; setFilter(has("plat")) })
+            // line of the next departure on each platform dot (source filled by PlatformLines)
+            .withLayer(SymbolLayer("pl-code", "pl-live").withProperties(
+                textField(get("line")),
+                textFont(arrayOf("Noto Sans Regular")),
+                textSize(interpolate(linear(), zoom(), stop(16, 8.5f), stop(18, 11f))),
+                textColor("#FFFFFF"),
+                textAllowOverlap(true), textIgnorePlacement(true),
+            ).apply { minZoom = PLAT_ZOOM })
             .withLayer(CircleLayer("sel-ring", "sel").withProperties(
                 circleRadius(15f), circleColor("#3DDC97"), circleOpacity(0.25f),
                 circleStrokeColor("#3DDC97"), circleStrokeWidth(3f),
@@ -184,7 +213,7 @@ class MapHolder(ctx: Context) {
                 symbolSortKey(get("r")),
             ).apply {
                 minZoom = 13.5f
-                setFilter(any(eq(get("big"), 1), gte(zoom(), 15.5)))
+                setFilter(all(not(has("plat")), any(eq(get("big"), 1), gte(zoom(), 15.5))))
             })
         TaktApp.mark("applyStyle geojson=${geojson != null} file=$fileVersion")
         m.setStyle(b) { s ->
@@ -288,6 +317,8 @@ class MapHolder(ctx: Context) {
         }
         // dim the other stops while a journey is shown
         (st.getLayer("st-dot") as? CircleLayer)?.setProperties(circleOpacity(if (it != null) 0.3f else 1f), circleStrokeOpacity(if (it != null) 0.3f else 1f))
+        (st.getLayer("pl-dot") as? CircleLayer)?.setProperties(circleOpacity(if (it != null) 0.3f else 1f), circleStrokeOpacity(if (it != null) 0.3f else 1f))
+        (st.getLayer("pl-code") as? SymbolLayer)?.setProperties(textOpacity(if (it != null) 0.3f else 1f))
         (st.getLayer("st-name") as? SymbolLayer)?.setProperties(textOpacity(if (it != null) 0.45f else 1f))
         (st.getSource("route") as GeoJsonSource).setGeoJson(lines.toString())
         (st.getSource("route-pts") as GeoJsonSource).setGeoJson(pts.toString())
@@ -341,11 +372,15 @@ class MapHolder(ctx: Context) {
         shownVersion = version
     }
 
-    fun setSelected(s: Station?) {
+    /** Ring around the selected station, or around the selected platform of it. */
+    fun setSelected(s: Station?, plat: app.takt.data.Platform? = null) {
         val src = style?.getSource("sel") as? GeoJsonSource ?: return
-        if (s == null) src.setGeoJson("""{"type":"FeatureCollection","features":[]}""")
-        else src.setGeoJson("""{"type":"Feature","geometry":{"type":"Point","coordinates":[${s.lon},${s.lat}]},"properties":{}}""")
+        val (lat, lon) = plat?.let { it.lat to it.lon } ?: s?.let { it.lat to it.lon } ?: (null to null)
+        if (lat == null) src.setGeoJson("""{"type":"FeatureCollection","features":[]}""")
+        else src.setGeoJson("""{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}""")
     }
+
+    fun setPlatformLines(geojson: String) { (style?.getSource("pl-live") as? GeoJsonSource)?.setGeoJson(geojson) }
 
     @Suppress("MissingPermission")
     fun enableLocation(ctx: Context) {
@@ -382,6 +417,8 @@ private fun parseColorHex(c: String?) = c?.takeIf { Regex("#[0-9A-Fa-f]{6}").mat
 /** Previous start, so "Hierhin" can undo the automatic start from a tap. */
 private object MapSel {
     var selected by mutableStateOf<String?>(null)
+    /** Key of the tapped platform of [selected] (its stop ids), or null for the whole station. */
+    var platform by mutableStateOf<String?>(null)
     var prevFrom: SavedPlace? = null
 }
 
@@ -422,7 +459,12 @@ fun MapScreen(nav: Nav) {
                 if (JourneyState.from?.station != st.id) MapSel.prevFrom = JourneyState.from
                 JourneyState.from = SavedPlace(st.name, st.id)
             }
+            MapSel.platform = null
             MapSel.selected = st?.id
+        }
+        holder.onPlatformClick = { id, pk ->
+            holder.onStationClick(id)
+            MapSel.platform = pk.takeIf { MapSel.selected != null }
         }
     }
     LaunchedEffect(holder.map, mapDark, mapSat) {
@@ -431,7 +473,12 @@ fun MapScreen(nav: Nav) {
         holder.applyStyle(mapDark, g, mapSat)
     }
     LaunchedEffect(holder.style, geojson) { geojson?.let { holder.setStations(it, app.stations.version) } }
-    LaunchedEffect(holder.style, MapSel.selected) { holder.setSelected(app.stations.get(MapSel.selected)) }
+    LaunchedEffect(holder.style, MapSel.selected, MapSel.platform) {
+        val st = app.stations.get(MapSel.selected)
+        holder.setSelected(st, st?.plats?.firstOrNull { it.key == MapSel.platform })
+    }
+    // next line on each platform dot while zoomed in
+    LaunchedEffect(holder.style) { if (holder.style != null) PlatformLines.run(holder) }
     LaunchedEffect(holder.style, permTick) { holder.enableLocation(ctx) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val bottomInset = LocalBottomInset.current
@@ -497,7 +544,7 @@ fun MapScreen(nav: Nav) {
                 )
                 androidx.compose.animation.AnimatedVisibility(visible = sel != null, enter = slideInVertically(Anim.offset(260)) { it }, exit = slideOutVertically(Anim.offset(220)) { it }) {
                     val shown = sel ?: lastSel
-                    if (shown != null) StationPanel(shown, nav,
+                    if (shown != null) StationPanel(shown, shown.plats.firstOrNull { it.key == MapSel.platform }, nav,
                         onClose = { MapSel.selected = null },
                         onPickDest = { picking = 1 },
                         onHere = {
@@ -524,9 +571,10 @@ fun MapScreen(nav: Nav) {
 }
 
 @Composable
-private fun StationPanel(s: Station, nav: Nav, onClose: () -> Unit, onPickDest: () -> Unit, onHere: () -> Unit) {
+private fun StationPanel(s: Station, plat: app.takt.data.Platform?, nav: Nav, onClose: () -> Unit, onPickDest: () -> Unit, onHere: () -> Unit) {
     val app = TaktApp.instance
-    val (live, _) = rememberDepartures(s.id)
+    // a tapped platform shows only what leaves from there
+    val (live, _) = rememberDepartures(s.id, stops = plat?.key)
     val favs by app.prefs.favStations.collectAsState()
     val now = nowMs() / 1000
     Surface(
@@ -538,6 +586,8 @@ private fun StationPanel(s: Station, nav: Nav, onClose: () -> Unit, onPickDest: 
             Row(Modifier.padding(start = 18.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(s.shortName, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (plat != null) Text(if (plat.code.isNotBlank()) "Steig ${plat.code}" else "Dieser Steig",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ModeDots(s.modes, 20.dp)
@@ -552,7 +602,7 @@ private fun StationPanel(s: Station, nav: Nav, onClose: () -> Unit, onPickDest: 
             }
             ErrorLine(live.error)
             val deps = upcoming(live.data?.value?.departures.orEmpty(), now).take(4)
-            if (deps.isEmpty() && live.data != null) Text("Keine Abfahrten in den nächsten 90 Minuten.", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (deps.isEmpty() && live.data != null) Text(if (plat != null) "Keine Abfahrten an diesem Steig in den nächsten 90 Minuten." else "Keine Abfahrten in den nächsten 90 Minuten.", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             // reserve the room of four rows while loading, so the panel does not grow afterwards
             if (deps.isEmpty() && live.data == null) Spacer(Modifier.height(284.dp))
             deps.forEachIndexed { i, d ->
