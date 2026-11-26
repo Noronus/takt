@@ -52,6 +52,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.TripOrigin
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.background
 import androidx.compose.ui.platform.LocalContext
@@ -338,8 +347,15 @@ class MapHolder(ctx: Context) {
         runCatching { if (Anim.ms(600) > 0) m.animateCamera(u, Anim.ms(600)) else m.moveCamera(u) }
     }
 
-    fun moveTo(ll: LatLng, zoom: Double) {
-        val u = CameraUpdateFactory.newLatLngZoom(ll, zoom)
+    fun moveTo(ll: LatLng, zoom: Double) = moveTo(ll, zoom, 0)
+
+    /**
+     * Centres [ll] in the part of the map above [bottomPx] (e.g. the station panel): that part's middle is the
+     * new centre. The padding is set on every move, so a later move without a panel is centred normally again.
+     */
+    fun moveTo(ll: LatLng, zoom: Double, bottomPx: Int) {
+        val pos = CameraPosition.Builder().target(ll).zoom(zoom).padding(0.0, 0.0, 0.0, bottomPx.toDouble()).build()
+        val u = CameraUpdateFactory.newCameraPosition(pos)
         val d = Anim.ms(500)
         if (d > 0) map?.animateCamera(u, d) else map?.moveCamera(u)
     }
@@ -414,12 +430,16 @@ private fun modeHex(m: String) = when (m) {
 }
 private fun parseColorHex(c: String?) = c?.takeIf { Regex("#[0-9A-Fa-f]{6}").matches(it) && it.uppercase() != "#FFFFFF" }
 
-/** Previous start, so "Hierhin" can undo the automatic start from a tap. */
+/** What is selected on the map: station, platform, trip in the panel. */
 private object MapSel {
     var selected by mutableStateOf<String?>(null)
     /** Key of the tapped platform of [selected] (its stop ids), or null for the whole station. */
     var platform by mutableStateOf<String?>(null)
-    var prevFrom: SavedPlace? = null
+    /** Trip opened from the panel's departures (trip id to line): its stops show in the panel instead. */
+    var trip by mutableStateOf<Pair<String, String>?>(null)
+    /** Taps to zoom to; [focusDone] is the last one handled, so coming back to the map tab does not zoom again. */
+    var focusReq by mutableStateOf(0)
+    var focusDone = 0
 }
 
 @Composable
@@ -435,17 +455,22 @@ fun MapScreen(nav: Nav) {
     val askPerm = rememberLocationPermission { permTick++ }
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf<Int?>(null) }
+    // station whose panel opened "Ziel wählen": becomes the start once a destination is picked
+    var panelStart by remember { mutableStateOf<SavedPlace?>(null) }
+    DefaultStartIsMyLocation()
 
     // back on the map: hide the shown route, then empty the fields, then the app closes.
     // After a jump (e.g. "Auf Karte zeigen") back returns to where it came from instead.
     androidx.activity.compose.BackHandler(
-        enabled = !nav.canReturn && (MapRoute.itinerary != null || JourneyState.from != null || JourneyState.to != null),
+        enabled = !nav.canReturn && (MapRoute.itinerary != null || JourneyState.from?.isMyLocation() == false || JourneyState.to != null),
     ) {
         if (MapRoute.itinerary != null) MapRoute.itinerary = null
-        else { clearJourney(); MapSel.prevFrom = null }
+        else clearJourney()
     }
     // back closes the station panel first (registered last, so it wins)
     androidx.activity.compose.BackHandler(enabled = MapSel.selected != null) { MapSel.selected = null }
+    // back from the stops of a trip returns to the departures (registered last, so it wins)
+    androidx.activity.compose.BackHandler(enabled = MapSel.selected != null && MapSel.trip != null) { MapSel.trip = null }
     // live vehicles: running while switched on and the map is shown (style changes keep the loop)
     LaunchedEffect(holder.map, mapLive) {
         if (!mapLive) { LiveVehicles.clear(); holder.setVehicles(LiveVehicles.EMPTY); return@LaunchedEffect }
@@ -453,14 +478,13 @@ fun MapScreen(nav: Nav) {
     }
     SideEffect {
         holder.onVehicleClick = { trip, line -> nav.trip(trip, line) }
+        // a tap only opens the station; start and destination are set with the panel's buttons
         holder.onStationClick = { id ->
             val st = app.stations.get(id)
-            if (st != null) {
-                if (JourneyState.from?.station != st.id) MapSel.prevFrom = JourneyState.from
-                JourneyState.from = SavedPlace(st.name, st.id)
-            }
             MapSel.platform = null
+            MapSel.trip = null
             MapSel.selected = st?.id
+            if (st != null) MapSel.focusReq++
         }
         holder.onPlatformClick = { id, pk ->
             holder.onStationClick(id)
@@ -473,6 +497,23 @@ fun MapScreen(nav: Nav) {
         holder.applyStyle(mapDark, g, mapSat)
     }
     LaunchedEffect(holder.style, geojson) { geojson?.let { holder.setStations(it, app.stations.version) } }
+    // a tapped station (or platform) is zoomed to and centred in the map above the panel
+    var panelH by remember { mutableIntStateOf(0) }
+    val bottomInsetPx = with(androidx.compose.ui.platform.LocalDensity.current) { LocalBottomInset.current.roundToPx() }
+    // (a platform tap sets the platform in the same click, so it is known here)
+    LaunchedEffect(MapSel.focusReq) {
+        if (MapSel.focusReq == MapSel.focusDone) return@LaunchedEffect
+        MapSel.focusDone = MapSel.focusReq
+        val st = app.stations.get(MapSel.selected) ?: return@LaunchedEffect
+        val p = st.plats.firstOrNull { it.key == MapSel.platform }
+        // the panel is measured once it is shown; it keeps the same height after that
+        kotlinx.coroutines.withTimeoutOrNull(800) { snapshotFlow { panelH }.first { it > 0 } }
+        // stay clear of PLAT_ZOOM (16), where the station dot and its platform dots swap: a station is shown a bit
+        // farther out (unless already well zoomed in), a platform well inside the platform zoom
+        val cur = holder.map?.cameraPosition?.zoom ?: 15.0
+        val zoom = if (p != null) maxOf(cur, 17.0) else if (cur >= 16.5) cur else 15.5
+        holder.moveTo(LatLng(p?.lat ?: st.lat, p?.lon ?: st.lon), zoom, panelH + bottomInsetPx)
+    }
     LaunchedEffect(holder.style, MapSel.selected, MapSel.platform) {
         val st = app.stations.get(MapSel.selected)
         holder.setSelected(st, st?.plats?.firstOrNull { it.key == MapSel.platform })
@@ -515,7 +556,6 @@ fun MapScreen(nav: Nav) {
         if (sel != null) lastSel = sel
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomInset.current)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End), verticalAlignment = Alignment.Bottom) {
-                RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
                 RoundButton(androidx.compose.material.icons.Icons.Rounded.DirectionsBus,
                     if (mapLive) "Live-Fahrzeuge aus" else "Live-Fahrzeuge an", { app.prefs.toggleMapLive() }, active = mapLive)
                 RoundButton(if (mapSat) androidx.compose.material.icons.Icons.Rounded.Map else androidx.compose.material.icons.Icons.Rounded.SatelliteAlt,
@@ -529,6 +569,7 @@ fun MapScreen(nav: Nav) {
                         Position.loc?.let { holder.moveTo(LatLng(it.latitude, it.longitude), 16.0) }
                     }
                 })
+                RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
             }
             // panel and journey input share one slot: the panel slides in over the input instead of stacking,
             // so nothing jumps when one of them leaves
@@ -537,21 +578,21 @@ fun MapScreen(nav: Nav) {
                 if (sel == null && shownRoute != null) RouteSummary(shownRoute, nav)
                 else if (sel == null) RouteCard(
                     from = JourneyState.from?.let { shortName(it.name) }, to = JourneyState.to?.let { shortName(it.name) },
-                    fromHint = "Haltestelle antippen", toHint = "Wohin?",
+                    fromHint = "Start", toHint = "Wohin?",
                     onFrom = { picking = 0 }, onTo = { picking = 1 },
                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp),
-                    onClear = { clearJourney(); MapSel.prevFrom = null },
+                    onClear = { clearJourney() },
                 )
                 androidx.compose.animation.AnimatedVisibility(visible = sel != null, enter = slideInVertically(Anim.offset(260)) { it }, exit = slideOutVertically(Anim.offset(220)) { it }) {
                     val shown = sel ?: lastSel
-                    if (shown != null) StationPanel(shown, shown.plats.firstOrNull { it.key == MapSel.platform }, nav,
+                    if (shown != null) Box(Modifier.onSizeChanged { panelH = it.height }) { StationPanel(shown, shown.plats.firstOrNull { it.key == MapSel.platform }, nav,
                         onClose = { MapSel.selected = null },
-                        onPickDest = { picking = 1 },
-                        onHere = {
-                            if (JourneyState.from?.station == shown.id) JourneyState.from = MapSel.prevFrom ?: Position.loc?.let { SavedPlace("Mein Standort", null, it.latitude, it.longitude) }
-                            MapSel.selected = null
-                            nav.setDest(SavedPlace(shown.name, shown.id))
-                        })
+                        // ring and pin fill the fields and close the panel (staying on the map); "Ziel wählen" goes on to the route
+                        onPickDest = { panelStart = SavedPlace(shown.name, shown.id); picking = 1 },
+                        onStart = { JourneyState.from = SavedPlace(shown.name, shown.id); MapSel.selected = null },
+                        // a stop in the trip list: that station in the panel, like a tap on the map
+                        onStop = { id -> holder.onStationClick(id) },
+                        onHere = { JourneyState.to = SavedPlace(shown.name, shown.id); MapSel.selected = null }) }
                 }
             }
         }
@@ -560,8 +601,11 @@ fun MapScreen(nav: Nav) {
     picking?.let { which ->
         PlacePicker(
             title = if (which == 0) "Start" else "Ziel",
-            onDismiss = { picking = null },
+            onDismiss = { picking = null; panelStart = null },
             onPick = { p ->
+                // from the panel: that station becomes the start together with the picked destination (a cancel changes nothing)
+                panelStart?.let { JourneyState.from = it }
+                panelStart = null
                 if (which == 0) JourneyState.from = p else JourneyState.to = p
                 picking = null
                 if (JourneyState.from != null && JourneyState.to != null) { MapSel.selected = null; nav.journey() }
@@ -571,19 +615,62 @@ fun MapScreen(nav: Nav) {
 }
 
 @Composable
-private fun StationPanel(s: Station, plat: app.takt.data.Platform?, nav: Nav, onClose: () -> Unit, onPickDest: () -> Unit, onHere: () -> Unit) {
+private fun StationPanel(
+    s: Station, plat: app.takt.data.Platform?, nav: Nav, onClose: () -> Unit, onPickDest: () -> Unit, onHere: () -> Unit,
+    onStart: () -> Unit, onStop: (String) -> Unit,
+) {
     val app = TaktApp.instance
     // a tapped platform shows only what leaves from there
     val (live, _) = rememberDepartures(s.id, stops = plat?.key)
     val favs by app.prefs.favStations.collectAsState()
     val now = nowMs() / 1000
+    val trip = MapSel.trip
+    // height of four departure rows: the list and the stops of a trip both use it, so the panel keeps its size
+    val listHeight = 284.dp
+    // height of the station header: the trip header keeps it, so the panel does not change size
+    var headerH by remember(s.id) { mutableIntStateOf(0) }
+    // bottom row, the same under the departures and under the stops of a trip
+    val buttons: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            PillButton("Ziel wählen", Icons.Rounded.Search, primary = true, onClick = onPickDest, modifier = Modifier.weight(1f))
+            // same marks as in the nearby list: ring = as start, pin = as destination
+            IconButton(onClick = onStart) { Icon(Icons.Rounded.TripOrigin, "Als Start", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = onHere) { Icon(Icons.Rounded.Place, "Hierhin", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            // the station as a full screen
+            IconButton(onClick = { nav.station(s.id) }) { Icon(Icons.Rounded.OpenInFull, "Vollbild", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+    val density = androidx.compose.ui.platform.LocalDensity.current
     Surface(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(top = 14.dp, bottom = 12.dp)) {
-            Row(Modifier.padding(start = 18.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (trip != null) {
+                val tl = rememberTrip(trip.first)
+                val t = tl.data?.value
+                // laid out like the station header: direction as the title with the line next to it, the button
+                // exactly where the close button was (the star's place stays empty)
+                Row(Modifier.padding(start = 18.dp, end = 6.dp).heightIn(min = with(density) { headerH.toDp() }), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(shortName(t?.dir ?: ""), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(8.dp))
+                            LineBadge(t?.line ?: trip.second, t?.mode ?: "other", t?.color)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        AgeChip(tl.data, tl.loading, tl.error)
+                    }
+                    Spacer(Modifier.size(48.dp))
+                    IconButton(onClick = { MapSel.trip = null }) { Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Zurück zu den Abfahrten") }
+                }
+                TripStops(trip.first, tl, trip.second, s.id, onStop = onStop, modifier = Modifier.fillMaxWidth().height(listHeight), tail = 8.dp, big = false)
+                // the buttons stay, so the panel keeps its size
+                buttons()
+                return@Column
+            }
+            Row(Modifier.padding(start = 18.dp, end = 6.dp).onSizeChanged { headerH = it.height }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(s.shortName, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (plat != null) Text(if (plat.code.isNotBlank()) "Steig ${plat.code}" else "Dieser Steig",
@@ -601,21 +688,25 @@ private fun StationPanel(s: Station, plat: app.takt.data.Platform?, nav: Nav, on
                 IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Schließen") }
             }
             ErrorLine(live.error)
-            val deps = upcoming(live.data?.value?.departures.orEmpty(), now).take(4)
-            if (deps.isEmpty() && live.data != null) Text(if (plat != null) "Keine Abfahrten an diesem Steig in den nächsten 90 Minuten." else "Keine Abfahrten in den nächsten 90 Minuten.", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            // reserve the room of four rows while loading, so the panel does not grow afterwards
-            if (deps.isEmpty() && live.data == null) Spacer(Modifier.height(284.dp))
-            deps.forEachIndexed { i, d ->
-                if (i > 0) RowDivider(70.dp)
-                DepartureRow(d, now, onClick = {
-                    if (d.trip.isNotBlank() && live.data?.value?.source != "insa") nav.trip(d.trip, d.line, s.id) else nav.station(s.id)
-                })
+            val deps = upcoming(live.data?.value?.departures.orEmpty(), now)
+            if (deps.isEmpty()) Box(Modifier.fillMaxWidth().height(listHeight)) {
+                if (live.data != null) Text(if (plat != null) "Keine Abfahrten an diesem Steig in den nächsten 90 Minuten." else "Keine Abfahrten in den nächsten 90 Minuten.", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                // all departures in the room of four rows; scrolls both ways and settles on a row
+                val ls = androidx.compose.foundation.lazy.rememberLazyListState()
+                LazyColumn(Modifier.fillMaxWidth().height(listHeight), state = ls,
+                    flingBehavior = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = ls),
+                    overscrollEffect = rememberListOverscroll(ls)) {
+                    itemsIndexed(deps, key = { _, d -> d.trip + "|" + d.t }) { i, d ->
+                        if (i > 0) RowDivider(70.dp)
+                        DepartureRow(d, now, onClick = {
+                            // the stops open here in the panel; INSA trips have no MOTIS id, they go to the station
+                            if (d.trip.isNotBlank() && live.data?.value?.source != "insa") MapSel.trip = d.trip to d.line else nav.station(s.id)
+                        })
+                    }
+                }
             }
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                PillButton("Ziel wählen", Icons.Rounded.Search, primary = true, onClick = onPickDest, modifier = Modifier.weight(1f))
-                PillButton("Hierhin", Icons.Rounded.Place, primary = false, onClick = onHere)
-                TextButton(onClick = { nav.station(s.id) }) { Text("Alle") }
-            }
+            buttons()
         }
     }
 }
