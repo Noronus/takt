@@ -113,6 +113,11 @@ class Prefs(ctx: Context) {
         sp.edit().putString("history", json.encodeToString(histSer, _history.value)).apply()
     }
 
+    /** Favourites section on the nearby tab folded away (the stars in the lists stay). */
+    private val _favCollapsed = MutableStateFlow(sp.getBoolean("favCollapsed", false))
+    val favCollapsed: StateFlow<Boolean> = _favCollapsed
+    fun toggleFavCollapsed() { _favCollapsed.value = !_favCollapsed.value; sp.edit().putBoolean("favCollapsed", _favCollapsed.value).apply() }
+
     private val _favStations = MutableStateFlow(sp.getString("favStations", "")!!.split('\n').filter { it.isNotBlank() })
     val favStations: StateFlow<List<String>> = _favStations
 

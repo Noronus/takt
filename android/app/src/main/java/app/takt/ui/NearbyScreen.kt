@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.TripOrigin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +43,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.foundation.background
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
@@ -60,11 +65,6 @@ object Position {
     var locating by mutableStateOf(false)
 }
 
-suspend fun refreshPosition() {
-    val l = TaktApp.instance.loc
-    if (!l.hasPermission()) return
-    if (Position.loc == null) Position.loc = l.lastKnown()
-    Position.locating = true
 /** The own position as a journey place, or null while it is unknown. */
 fun myLocationPlace(): SavedPlace? = Position.loc?.let { SavedPlace("Mein Standort", null, it.latitude, it.longitude) }
 
@@ -80,6 +80,11 @@ fun DefaultStartIsMyLocation() {
     }
 }
 
+suspend fun refreshPosition() {
+    val l = TaktApp.instance.loc
+    if (!l.hasPermission()) return
+    if (Position.loc == null) Position.loc = l.lastKnown()
+    Position.locating = true
     try { l.current()?.let { Position.loc = it } } finally { Position.locating = false }
 }
 
@@ -121,7 +126,8 @@ fun NearbyScreen(nav: Nav) {
     val mode = when { query.isNotBlank() -> "Suche"; searching -> "Zuletzt gewählt"; else -> null }
     // "Haltestellen" stays under the search field once its place in the list has scrolled up there
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val hdrIndex = (if (stations.isEmpty()) 1 else 0) + (if (favs.isNotEmpty()) 1 + favs.size else 0)
+    val favCollapsed by app.prefs.favCollapsed.collectAsState()
+    val hdrIndex = (if (stations.isEmpty()) 1 else 0) + (if (favs.isNotEmpty()) 1 + (if (favCollapsed) 0 else favs.size) else 0)
     val stationsPinned by remember(hdrIndex) {
         androidx.compose.runtime.derivedStateOf {
             val hdr = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "hdr-st" }
@@ -138,10 +144,12 @@ fun NearbyScreen(nav: Nav) {
     ScreenTitle("In der Nähe", age = { AgeChip(rt.data, rt.loading, rt.error, compact = true) }) { SettingsButton(nav) }
     SearchField(query, { query = it }, "Haltestelle suchen", fieldModifier = Modifier.onFocusChanged { searching = it.isFocused })
     if (mode != null) SectionHeader(mode, now)
-    Box(Modifier.fillMaxWidth().weight(1f)) {
+    // the list ends above the keyboard, so rows hidden by it can be scrolled into view
+    Box(Modifier.fillMaxWidth().weight(1f).imePadding()) {
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = pulling, onRefresh = onPull, modifier = Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize(), state = listState, overscrollEffect = rememberListOverscroll(listState),
-        contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
+        // with the keyboard open the bottom bar is covered anyway: no room kept for it
+        contentPadding = PaddingValues(bottom = if (imeOpen) 8.dp else LocalBottomInset.current + 8.dp)) {
         if (stations.isEmpty()) item { Text("Haltestellenliste fehlt noch. Server in den Einstellungen prüfen.", Modifier.padding(20.dp)) }
 
         val lastPicked = history.associate { it.station to it.at }
@@ -163,8 +171,15 @@ fun NearbyScreen(nav: Nav) {
             return@LazyColumn
         }
         if (favs.isNotEmpty()) {
-            item { SectionTitle("Favoriten") }
-            itemsIndexed(favs, key = { _, s -> "f" + s.id }) { i, s -> GroupedStationRow(s, Position.loc?.let { dist(it, s) }, nav, i, favs.size, fav = true) }
+            // tap on the title folds the favourites away (and back); the stars in the lists stay
+            item(key = "hdr-fav") {
+                Row(Modifier.fillMaxWidth().clickableRow { app.prefs.toggleFavCollapsed() }, verticalAlignment = Alignment.Bottom) {
+                    SectionTitle(if (favCollapsed) "Favoriten (${favs.size})" else "Favoriten")
+                    Icon(if (favCollapsed) Icons.Rounded.ExpandMore else Icons.Rounded.ExpandLess, if (favCollapsed) "Favoriten einblenden" else "Favoriten ausblenden",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp).size(18.dp))
+                }
+            }
+            if (!favCollapsed) itemsIndexed(favs, key = { _, s -> "f" + s.id }) { i, s -> GroupedStationRow(s, Position.loc?.let { dist(it, s) }, nav, i, favs.size) }
         }
         item(key = "hdr-st") { SectionHeader("Haltestellen", now) }
         if (!hasPerm) item {
@@ -215,8 +230,9 @@ fun dist(l: Location, s: Station): Int {
 
 /** Station row drawn as part of a rounded group (first/last rows get the rounded corners). */
 @Composable
-fun GroupedStationRow(s: Station, meters: Int?, nav: Nav, index: Int, count: Int, fav: Boolean = false, note: String? = null) {
+fun GroupedStationRow(s: Station, meters: Int?, nav: Nav, index: Int, count: Int, note: String? = null) {
     val shape = groupShape(index, count)
+    val favIds by TaktApp.instance.prefs.favStations.collectAsState()
     // every pick from these lists goes into the history (the map does not)
     val record = { TaktApp.instance.prefs.recordStation(s.id) }
     androidx.compose.material3.Surface(
@@ -227,7 +243,6 @@ fun GroupedStationRow(s: Station, meters: Int?, nav: Nav, index: Int, count: Int
                 Modifier.fillMaxWidth().clickableRow { record(); nav.station(s.id) }.padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (fav) { Icon(Icons.Rounded.Star, null, tint = Palette.warn); Spacer(Modifier.width(10.dp)) }
                 Column(Modifier.weight(1f)) {
                     Text(s.shortName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
@@ -240,6 +255,13 @@ fun GroupedStationRow(s: Station, meters: Int?, nav: Nav, index: Int, count: Int
                         }
                     }
                 }
+                // favourite on/off, on every row
+                val isFav = s.id in favIds
+                IconButton(onClick = { TaktApp.instance.prefs.toggleFavStation(s.id) }) {
+                    Icon(if (isFav) Icons.Rounded.Star else Icons.Rounded.StarBorder, if (isFav) "Favorit entfernen" else "Als Favorit",
+                        tint = if (isFav) Palette.warn else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // same marks as in the map panel: ring = as start, pin = as destination
                 IconButton(onClick = { record(); nav.setStart(SavedPlace(s.name, s.id)) }) { Icon(Icons.Rounded.TripOrigin, "Als Start", tint = MaterialTheme.colorScheme.primary) }
                 IconButton(onClick = { record(); nav.setDest(SavedPlace(s.name, s.id)) }) { Icon(Icons.Rounded.Place, "Als Ziel", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
