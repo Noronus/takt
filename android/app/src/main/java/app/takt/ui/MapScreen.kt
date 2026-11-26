@@ -323,17 +323,19 @@ class MapHolder(ctx: Context) {
 
         val dark = styleDark == true
         if (st.getSource("route") == null) {
+            // below the stops and below the live vehicles (those may already be on the map)
+            val under = if (st.getLayer("veh-dot") != null) "veh-dot" else "st-dot"
             st.addSource(GeoJsonSource("route"))
             st.addSource(GeoJsonSource("route-pts"))
             st.addLayerBelow(org.maplibre.android.style.layers.LineLayer("route-casing", "route").withProperties(
                 lineColor(if (dark) "#0D0F12" else "#FFFFFF"), lineWidth(9f), lineCap("round"), lineJoin("round"),
-            ).apply { setFilter(eq(get("walk"), 0)) }, "st-dot")
+            ).apply { setFilter(eq(get("walk"), 0)) }, under)
             st.addLayerBelow(org.maplibre.android.style.layers.LineLayer("route-line", "route").withProperties(
                 lineColor(toColor(get("c"))), lineWidth(5.5f), lineCap("round"), lineJoin("round"),
-            ).apply { setFilter(eq(get("walk"), 0)) }, "st-dot")
+            ).apply { setFilter(eq(get("walk"), 0)) }, under)
             st.addLayerBelow(org.maplibre.android.style.layers.LineLayer("route-walk", "route").withProperties(
                 lineColor(if (dark) "#E5E7EB" else "#334155"), lineWidth(3.5f), lineDasharray(arrayOf(0.1f, 1.8f)), lineCap("round"),
-            ).apply { setFilter(eq(get("walk"), 1)) }, "st-dot")
+            ).apply { setFilter(eq(get("walk"), 1)) }, under)
             st.addLayer(CircleLayer("route-stop", "route-pts").withProperties(
                 circleRadius(switchCase(has("end"), literal(8f), has("via"), literal(3.5f), literal(5.5f))),
                 circleColor(switchCase(has("end"), toColor(get("c")), literal(if (dark) "#0D0F12" else "#FFFFFF"))),
@@ -392,23 +394,23 @@ class MapHolder(ctx: Context) {
         if (d > 0) map?.animateCamera(u, d) else map?.moveCamera(u)
     }
 
-    /** Live vehicles: dots in line colour with the line number, above everything else. */
+    /** Live vehicles: dots in line colour with the line number, above the route lines but below all stops, so they never hide a stop. */
     fun setVehicles(geojson: String) {
         val st = style ?: return
         if (st.getSource("veh") == null) {
             if (geojson == LiveVehicles.EMPTY) return
             st.addSource(GeoJsonSource("veh"))
-            st.addLayer(CircleLayer("veh-dot", "veh").withProperties(
+            st.addLayerBelow(CircleLayer("veh-dot", "veh").withProperties(
                 circleColor(toColor(get("c"))),
                 circleRadius(interpolate(linear(), zoom(), stop(12, 4.5f), stop(15, 10f), stop(18, 13f))),
                 circleStrokeColor("#FFFFFF"), circleStrokeWidth(1.8f),
                 circleOpacity(switchCase(eq(get("rt"), 1), literal(1f), literal(0.8f))),
-            ))
-            st.addLayer(SymbolLayer("veh-label", "veh").withProperties(
+            ), "st-dot")
+            st.addLayerBelow(SymbolLayer("veh-label", "veh").withProperties(
                 textField(get("line")), textFont(arrayOf("Noto Sans Regular")),
                 textSize(interpolate(linear(), zoom(), stop(14, 9f), stop(18, 12f))),
                 textColor("#FFFFFF"), textAllowOverlap(true), textIgnorePlacement(true),
-            ).apply { minZoom = 14f })
+            ).apply { minZoom = 14f }, "st-dot")
         }
         (st.getSource("veh") as? GeoJsonSource)?.setGeoJson(geojson)
     }
