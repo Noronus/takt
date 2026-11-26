@@ -65,6 +65,21 @@ suspend fun refreshPosition() {
     if (!l.hasPermission()) return
     if (Position.loc == null) Position.loc = l.lastKnown()
     Position.locating = true
+/** The own position as a journey place, or null while it is unknown. */
+fun myLocationPlace(): SavedPlace? = Position.loc?.let { SavedPlace("Mein Standort", null, it.latitude, it.longitude) }
+
+/** The start that is filled in by itself (own position): counts as an empty field, e.g. for back. */
+fun SavedPlace.isMyLocation() = station == null && name == "Mein Standort"
+
+/** An empty start means the own position (as soon as it is known). Called by the map and the route tab. */
+@androidx.compose.runtime.Composable
+fun DefaultStartIsMyLocation() {
+    val haveLoc = Position.loc != null
+    androidx.compose.runtime.LaunchedEffect(JourneyState.from == null, haveLoc) {
+        if (JourneyState.from == null) myLocationPlace()?.let { JourneyState.from = it }
+    }
+}
+
     try { l.current()?.let { Position.loc = it } } finally { Position.locating = false }
 }
 

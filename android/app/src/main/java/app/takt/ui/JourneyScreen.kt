@@ -194,6 +194,7 @@ fun JourneyScreen(nav: Nav) {
         }
     }
 
+    DefaultStartIsMyLocation()
     LaunchedEffect(JourneyState.from, JourneyState.to) {
         val f = JourneyState.from; val t = JourneyState.to
         if (f != null && t != null && PlanState.resultKey != "${f.param()}>${t.param()}") { live.data = null; search() }
@@ -286,7 +287,7 @@ fun JourneyScreen(nav: Nav) {
                     }
                 }
             } else if (!live.loading) item {
-                Text("Tipp: Auf der Karte eine Haltestelle antippen – sie wird automatisch Start.",
+                Text("Tipp: Auf der Karte eine Haltestelle antippen und mit Ring oder Stecknadel als Start oder Ziel setzen.",
                     Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
         } else {
