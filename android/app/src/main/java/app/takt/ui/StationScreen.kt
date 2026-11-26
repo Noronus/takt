@@ -54,13 +54,12 @@ fun StationScreen(stationId: String, nav: Nav) {
             }
         }
         Text(shortName(name), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp))
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        // modes on the left, start/destination on the right: the same marks as in the map panel
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (st != null) ModeDots(st.modes)
-        }
-        Row(Modifier.padding(horizontal = 16.dp)) {
-            PillButton("Von hier", Icons.Rounded.TripOrigin, primary = true, onClick = { nav.setStart(SavedPlace(name, stationId)) })
-            Spacer(Modifier.width(8.dp))
-            PillButton("Hierhin", Icons.Rounded.Place, primary = false, onClick = { nav.setDest(SavedPlace(name, stationId)) })
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { nav.setStart(SavedPlace(name, stationId)) }) { Icon(Icons.Rounded.TripOrigin, "Von hier", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { nav.setDest(SavedPlace(name, stationId)) }) { Icon(Icons.Rounded.Place, "Hierhin", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         if (live.data?.value?.source == "insa") Text("Ausweichquelle INSA – MOTIS nicht erreichbar", style = MaterialTheme.typography.labelSmall, color = Palette.warn, modifier = Modifier.padding(start = 20.dp, top = 6.dp))
         ErrorLine(live.error, Modifier.padding(top = 6.dp))
