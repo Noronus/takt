@@ -82,6 +82,7 @@ import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.*
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.PropertyFactory.*
@@ -288,6 +289,15 @@ class MapHolder(ctx: Context) {
         val lines = StringBuilder("{\"type\":\"FeatureCollection\",\"features\":[")
         val pts = StringBuilder("{\"type\":\"FeatureCollection\",\"features\":[")
         var first = true; var firstPt = true
+        val named = HashSet<String>()   // each name once (a transfer is the end of one leg and the start of the next)
+        // a stop with its name in full strength; empty name = dot only
+        fun point(lat: Double, lon: Double, props: String, name: String) {
+            if (!firstPt) pts.append(','); firstPt = false
+            val n = if (name.isNotBlank() && named.add(name)) name else ""
+            pts.append("{\"type\":\"Feature\",\"properties\":{").append(props).append(",\"n\":")
+                .append(kotlinx.serialization.json.JsonPrimitive(n).toString())
+                .append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[").append(lon).append(',').append(lat).append("]}}")
+        }
         it?.legs?.forEach { l ->
             val walk = l.mode == "walk"
             val coords = l.geometry?.decode()?.takeIf { c -> c.size >= 2 }
@@ -298,18 +308,17 @@ class MapHolder(ctx: Context) {
                 .append("},\"geometry\":{\"type\":\"LineString\",\"coordinates\":[")
             coords.forEachIndexed { k, (la, lo) -> if (k > 0) lines.append(','); lines.append('[').append(lo).append(',').append(la).append(']') }
             lines.append("]}}")
-            if (!walk) for (pl in listOf(l.from, l.to)) {
-                if (!firstPt) pts.append(','); firstPt = false
-                pts.append("{\"type\":\"Feature\",\"properties\":{\"c\":\"").append(color).append("\",\"n\":")
-                    .append(kotlinx.serialization.json.JsonPrimitive(shortName(pl.name)).toString())
-                    .append("},\"geometry\":{\"type\":\"Point\",\"coordinates\":[").append(pl.lon).append(',').append(pl.lat).append("]}}")
+            if (!walk) {
+                // stops in between: small dots in the line colour, their names stay dimmed with the other stops
+                for (v in l.via) point(v.lat, v.lon, "\"c\":\"$color\",\"via\":1", "")
+                for (pl in listOf(l.from, l.to)) point(pl.lat, pl.lon, "\"c\":\"$color\"", shortName(pl.name))
             }
         }
         // start and end of the whole journey (addresses included)
-        it?.legs?.firstOrNull()?.from?.let { p -> if (!firstPt) pts.append(','); firstPt = false
-            pts.append("{\"type\":\"Feature\",\"properties\":{\"c\":\"#3DDC97\",\"n\":\"\",\"end\":1},\"geometry\":{\"type\":\"Point\",\"coordinates\":[").append(p.lon).append(',').append(p.lat).append("]}}") }
-        it?.legs?.lastOrNull()?.to?.let { p -> if (!firstPt) pts.append(','); firstPt = false
-            pts.append("{\"type\":\"Feature\",\"properties\":{\"c\":\"#FFFFFF\",\"n\":\"\",\"end\":2},\"geometry\":{\"type\":\"Point\",\"coordinates\":[").append(p.lon).append(',').append(p.lat).append("]}}") }
+        it?.legs?.firstOrNull()?.from?.let { p -> point(p.lat, p.lon, "\"c\":\"#3DDC97\",\"end\":1", shortName(p.name)) }
+        it?.legs?.lastOrNull()?.to?.let { p -> point(p.lat, p.lon, "\"c\":\"#FFFFFF\",\"end\":2", shortName(p.name)) }
+        // stations whose name is shown by the route itself: left out of the dimmed station names
+        val routeIds = it?.legs?.flatMap { l -> listOfNotNull(l.from.station, l.to.station) }?.distinct().orEmpty()
         lines.append("]}"); pts.append("]}")
 
         val dark = styleDark == true
@@ -326,17 +335,32 @@ class MapHolder(ctx: Context) {
                 lineColor(if (dark) "#E5E7EB" else "#334155"), lineWidth(3.5f), lineDasharray(arrayOf(0.1f, 1.8f)), lineCap("round"),
             ).apply { setFilter(eq(get("walk"), 1)) }, "st-dot")
             st.addLayer(CircleLayer("route-stop", "route-pts").withProperties(
-                circleRadius(switchCase(has("end"), literal(8f), literal(5.5f))),
+                circleRadius(switchCase(has("end"), literal(8f), has("via"), literal(3.5f), literal(5.5f))),
                 circleColor(switchCase(has("end"), toColor(get("c")), literal(if (dark) "#0D0F12" else "#FFFFFF"))),
                 circleStrokeColor(switchCase(has("end"), literal(if (dark) "#0D0F12" else "#1F2937"), toColor(get("c")))),
-                circleStrokeWidth(3f),
+                circleStrokeWidth(switchCase(has("via"), literal(2f), literal(3f))),
             ))
+            // names of start, destination and transfers: not dimmed
+            st.addLayer(SymbolLayer("route-name", "route-pts").withProperties(
+                textField(get("n")),
+                textFont(arrayOf("Noto Sans Regular")),
+                textSize(interpolate(linear(), zoom(), stop(12, 11f), stop(17, 13.5f))),
+                textOffset(arrayOf(0f, 1.1f)), textAnchor("top"),
+                textColor(if (styleSat == true) "#FFFFFF" else if (dark) "#E5E7EB" else "#1F2937"),
+                textHaloColor(if (styleSat == true) "#000000" else if (dark) "#0D0F12" else "#FFFFFF"), textHaloWidth(1.6f),
+                textAllowOverlap(true),
+            ).apply { setFilter(neq(get("n"), "")) })
         }
         // dim the other stops while a journey is shown
         (st.getLayer("st-dot") as? CircleLayer)?.setProperties(circleOpacity(if (it != null) 0.3f else 1f), circleStrokeOpacity(if (it != null) 0.3f else 1f))
         (st.getLayer("pl-dot") as? CircleLayer)?.setProperties(circleOpacity(if (it != null) 0.3f else 1f), circleStrokeOpacity(if (it != null) 0.3f else 1f))
         (st.getLayer("pl-code") as? SymbolLayer)?.setProperties(textOpacity(if (it != null) 0.3f else 1f))
-        (st.getLayer("st-name") as? SymbolLayer)?.setProperties(textOpacity(if (it != null) 0.45f else 1f))
+        (st.getLayer("st-code") as? SymbolLayer)?.setProperties(textOpacity(if (it != null) 0.3f else 1f))
+        (st.getLayer("st-name") as? SymbolLayer)?.apply {
+            setProperties(textOpacity(if (it != null) 0.45f else 1f))
+            val base = all(not(has("plat")), any(eq(get("big"), 1), gte(zoom(), 15.5)))
+            setFilter(if (routeIds.isEmpty()) base else all(base, not(Expression.`in`(get("id"), literal(routeIds.toTypedArray())))))
+        }
         (st.getSource("route") as GeoJsonSource).setGeoJson(lines.toString())
         (st.getSource("route-pts") as GeoJsonSource).setGeoJson(pts.toString())
     }

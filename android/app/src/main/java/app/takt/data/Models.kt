@@ -68,10 +68,14 @@ data class Leg(
     val duration: Long = 0,
     val distance: Long? = null,
     val stops: Int = 0,
+    /** Stops in between (transit legs). */
+    val via: List<ViaStop> = emptyList(),
     val geometry: Geometry? = null,
     val notes: List<String> = emptyList(),
     val info: List<String> = emptyList(),
 )
+
+@Serializable data class ViaStop(val name: String = "", val station: String? = null, val lat: Double = 0.0, val lon: Double = 0.0)
 
 @Serializable data class Geometry(val points: String = "", val precision: Int = 6) {
     /** Decodes the encoded polyline into (lat, lon) pairs. */

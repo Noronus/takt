@@ -354,6 +354,10 @@ function mapLeg(l: any) {
     realtime: !!l.realTime, src: l.realTime ? 'delfi' : null as null | 'delfi' | 'insa',
     cancelled: !!l.cancelled, duration: l.duration, distance: l.distance ? Math.round(l.distance) : null,
     stops: (l.intermediateStops || []).length,
+    // the stops in between (for the map: small dots along the line)
+    via: transit ? (l.intermediateStops || []).map((p: any) => ({
+      name: p.name, station: (stopToStation.get(p.parentId) || stopToStation.get(p.stopId))?.id || null, lat: p.lat, lon: p.lon,
+    })) : [],
     // encoded polyline (Google format) of the leg: real paths for walking, OSM-matched shapes for transit
     geometry: l.legGeometry?.points ? { points: l.legGeometry.points, precision: l.legGeometry.precision ?? 6 } : null,
     notes: alertTexts(l.alerts),
