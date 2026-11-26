@@ -52,11 +52,11 @@ Bearer token per person in `DATA/tokens.txt` (`./tokens.sh add NAME`), or a sing
 
 ## Deploy
 
-The server image `ghcr.io/noronus/takt` is built for every release (`:latest`, `:0.4.0`, `:0.4`). On Unraid the template `unraid/my-Takt.xml` uses it, so updates show up in the Docker tab.
+The server image `ghcr.io/noronus/takt` is built for every release (`:latest`, `:0.4.0`, `:0.4`). On Unraid the template `unraid/my-Takt.xml` uses it, so updates show up in the Docker tab. `unraid/takt-autoupdate.sh` checks the Takt and Takt-MOTIS images every 5 minutes and installs updates (a `--local` image is left alone).
 
 ```sh
 cp deploy.env.example deploy.env   # SSH target, host address, ports
-./deploy.sh                        # pull the image on the host, install templates, (re)create containers
+./deploy.sh                        # pull the image on the host, install templates + 5-min auto update, (re)create containers
 ./deploy.sh --local                # build from this checkout instead and upload it (unreleased changes)
 ./deploy.sh --motis                # also recreate the MOTIS container
 ```

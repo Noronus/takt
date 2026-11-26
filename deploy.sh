@@ -37,6 +37,9 @@ echo "== templates + data folders"
 T=/boot/config/plugins/dockerMan/templates-user
 render unraid/my-Takt.xml | $DEPLOY_SSH "cat > $T/my-Takt.xml"
 render unraid/my-Takt-MOTIS.xml | $DEPLOY_SSH "cat > $T/my-Takt-MOTIS.xml"
+# auto update of Takt and Takt-MOTIS every 5 minutes (only these two, see the script)
+$DEPLOY_SSH "mkdir -p /boot/config/plugins/takt && cat > /boot/config/plugins/takt/autoupdate.sh" < unraid/takt-autoupdate.sh
+$DEPLOY_SSH "echo '*/5 * * * * /bin/bash /boot/config/plugins/takt/autoupdate.sh >/dev/null 2>&1' > /boot/config/plugins/dynamix/takt-autoupdate.cron && /usr/local/sbin/update_cron"
 $DEPLOY_SSH "mkdir -p $DATA/motis && chown -R 99:100 $DATA && { [ ! -f $DATA/tokens.txt ] || chmod 600 $DATA/tokens.txt; }"
 
 if [ -n "$SEED" ]; then
