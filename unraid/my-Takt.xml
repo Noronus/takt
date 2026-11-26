@@ -1,17 +1,17 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>Takt</Name>
-  <Repository>takt:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/noronus/takt:latest</Repository>
+  <Registry>https://github.com/Noronus/takt/pkgs/container/takt</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <MyMAC/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support/>
-  <Project/>
+  <Support>https://github.com/Noronus/takt/issues</Support>
+  <Project>https://github.com/Noronus/takt</Project>
   <ReadMe/>
-  <Overview>Takt backend for the Leipzig/MDV transit app. Downloads the open DELFI timetable (gtfs.de) weekly and OpenStreetMap monthly, cuts them to the MDV area, prepares the input for the Takt-MOTIS container, filters the DELFI GTFS-Realtime feed and serves a small JSON API for the Android app. S-Bahn/regional realtime and disruption messages come from INSA. Image is built locally (deploy.sh). Data: DELFI e.V. / gtfs.de (CC BY 4.0, realtime CC BY-SA 4.0), OpenStreetMap contributors (ODbL).</Overview>
+  <Overview>Takt backend for the Leipzig/MDV transit app. Downloads the open DELFI timetable (gtfs.de) weekly and OpenStreetMap monthly, cuts them to the MDV area, prepares the input for the Takt-MOTIS container, filters the DELFI GTFS-Realtime feed and serves a small JSON API for the Android app. S-Bahn/regional realtime and disruption messages come from INSA. Image: ghcr.io/noronus/takt, built for every release. Data: DELFI e.V. / gtfs.de (CC BY 4.0, realtime CC BY-SA 4.0), OpenStreetMap contributors (ODbL).</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:8080]/api/v1/status</WebUI>
   <TemplateURL/>

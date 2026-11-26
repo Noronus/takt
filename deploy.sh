@@ -1,27 +1,37 @@
 #!/bin/bash
-# Builds the Takt image locally, loads it on the Docker host (Unraid) via SSH, installs the
-# two Unraid templates and (re)creates the containers Takt and Takt-MOTIS. Data is kept.
+# Pulls the Takt image from ghcr.io on the Docker host (Unraid) via SSH, installs the two Unraid
+# templates and (re)creates the containers Takt and Takt-MOTIS. Data is kept.
 # Usage: ./deploy.sh            update Takt (MOTIS only if missing)
+#        ./deploy.sh --local    build the image from this checkout instead and upload it (unreleased changes)
 #        ./deploy.sh --motis    also recreate Takt-MOTIS (e.g. after a MOTIS version change)
 #        ./deploy.sh --seed DIR copy prepared data from DIR (cache/, static/, motis/input/) first
+# TAKT_IMAGE in deploy.env picks another image or tag (default ghcr.io/noronus/takt:latest).
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -f deploy.env ] || { echo "deploy.env missing, see deploy.env.example"; exit 1; }
 source deploy.env
 : "${DEPLOY_SSH:?}" "${DEPLOY_HOST:?}"
 API_PORT=${API_PORT:-8097}; MOTIS_PORT=${MOTIS_PORT:-8098}; DATA=${DATA:-/mnt/user/appdata/takt}; MOTIS_VERSION=${MOTIS_VERSION:-2.11}; REQUIRE_TOKEN=${REQUIRE_TOKEN:-false}
-RECREATE_MOTIS=0; SEED=""
-while [ $# -gt 0 ]; do case "$1" in --motis) RECREATE_MOTIS=1;; --seed) SEED="$2"; shift;; esac; shift; done
+IMAGE=${TAKT_IMAGE:-ghcr.io/noronus/takt:latest}
+RECREATE_MOTIS=0; SEED=""; LOCAL=0
+while [ $# -gt 0 ]; do case "$1" in --motis) RECREATE_MOTIS=1;; --local) LOCAL=1;; --seed) SEED="$2"; shift;; esac; shift; done
+[ "$LOCAL" = 1 ] && IMAGE=takt:local
 
 render() {
   sed -e "s#__HOST__#$DEPLOY_HOST#g" -e "s#__API_PORT__#$API_PORT#g" -e "s#__MOTIS_PORT__#$MOTIS_PORT#g" \
-      -e "s#__MOTIS_VERSION__#$MOTIS_VERSION#g" -e "s#__REQUIRE_TOKEN__#$REQUIRE_TOKEN#g" -e "s#/mnt/user/appdata/takt#$DATA#g" "$1"
+      -e "s#__MOTIS_VERSION__#$MOTIS_VERSION#g" -e "s#__REQUIRE_TOKEN__#$REQUIRE_TOKEN#g" -e "s#/mnt/user/appdata/takt#$DATA#g" \
+      -e "s#ghcr.io/noronus/takt:latest#$IMAGE#g" "$1"
 }
 
-echo "== build image"
-docker build -q -t takt:latest . >/dev/null
-echo "== upload image"
-docker save takt:latest | gzip -1 | $DEPLOY_SSH 'gunzip | docker load' >/dev/null
+if [ "$LOCAL" = 1 ]; then
+  echo "== build image (local)"
+  docker build -q -t "$IMAGE" . >/dev/null
+  echo "== upload image"
+  docker save "$IMAGE" | gzip -1 | $DEPLOY_SSH 'gunzip | docker load' >/dev/null
+else
+  echo "== pull $IMAGE"
+  $DEPLOY_SSH "docker pull -q $IMAGE >/dev/null"
+fi
 
 echo "== templates + data folders"
 T=/boot/config/plugins/dockerMan/templates-user
@@ -42,7 +52,7 @@ $DEPLOY_SSH "docker rm -f Takt >/dev/null 2>&1; docker run -d --name Takt --user
   -e MOTIS_URL=http://$DEPLOY_HOST:$MOTIS_PORT -e SELF_URL=http://$DEPLOY_HOST:$API_PORT \
   -l net.unraid.docker.managed=dockerman -l net.unraid.docker.icon=http://$DEPLOY_HOST:$API_PORT/icon.png \
   -l 'net.unraid.docker.webui=http://[IP]:[PORT:8080]/api/v1/status' \
-  takt:latest >/dev/null && docker image prune -f >/dev/null"
+  $IMAGE >/dev/null && docker image prune -f >/dev/null"
 
 if [ "$RECREATE_MOTIS" = 1 ] || ! $DEPLOY_SSH "docker inspect Takt-MOTIS >/dev/null 2>&1"; then
   echo "== container Takt-MOTIS ($MOTIS_VERSION)"
