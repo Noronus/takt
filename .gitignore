@@ -13,3 +13,5 @@ android/keystore.properties
 *.jks
 phase0/comp.yaml
 phase0/motis-openapi.yaml
+__pycache__/
+.ruff_cache/

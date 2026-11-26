@@ -1,30 +1,44 @@
-import csv, sys, time, datetime, collections, zipfile, io
-from google.transit import gtfs_realtime_pb2
-d=sys.argv[1]
-routes={r["route_id"]:r for r in csv.DictReader(open(f"{d}/routes.txt",encoding="utf-8-sig"))}
-lvb_routes={k for k,v in routes.items() if v["agency_id"]=="84"}
-trips={t["trip_id"]:t for t in csv.DictReader(open(f"{d}/trips.txt",encoding="utf-8-sig")) if t["route_id"] in lvb_routes}
-today=datetime.date.today(); ds=today.strftime("%Y%m%d"); wd=today.strftime("%A").lower()
-active=set()
-for c in csv.DictReader(open(f"{d}/calendar.txt",encoding="utf-8-sig")):
-    if c["start_date"]<=ds<=c["end_date"] and c[wd]=="1": active.add(c["service_id"])
-for c in csv.DictReader(open(f"{d}/calendar_dates.txt",encoding="utf-8-sig")):
-    if c["date"]==ds: (active.add if c["exception_type"]=="1" else active.discard)(c["service_id"])
-today_trips={t for t,v in trips.items() if v["service_id"] in active}
-print("LVB trips total",len(trips),"today",len(today_trips))
-# trip time spans from stop_times (streamed)
-span={}
-z=zipfile.ZipFile(f"{d}/gtfs.zip"); f=io.TextIOWrapper(z.open("stop_times.txt"),encoding="utf-8-sig")
-r=csv.reader(f); h=next(r); ti=h.index("trip_id"); ai=h.index("arrival_time"); di=h.index("departure_time")
-def s(x): a,b,c=map(int,x.split(":")); return a*3600+b*60+c
-for row in r:
-    t=row[ti]
-    if t in today_trips:
-        x=s(row[di] or row[ai]); lo,hi=span.get(t,(x,x)); span[t]=(min(lo,x),max(hi,x))
-now=datetime.datetime.now(); ns=now.hour*3600+now.minute*60+now.second
-running={t for t,(lo,hi) in span.items() if lo-1800<=ns<=hi}
-feed=gtfs_realtime_pb2.FeedMessage(); feed.ParseFromString(open(f"{d}/rt.pb","rb").read())
-tu={e.trip_update.trip.trip_id for e in feed.entity if e.HasField("trip_update")}
-print("running now (incl. starting within 30min):",len(running),"with TU:",len(running&tu), f"{100*len(running&tu)/max(1,len(running)):.0f}%")
-miss=collections.Counter(routes[trips[t]["route_id"]]["route_short_name"] for t in running-tu)
-print("missing by line:",miss.most_common(15))
+"""Share of LVB trips running right now that have realtime in the snapshot, and which lines lack it."""
+
+import argparse
+import collections
+from pathlib import Path
+
+from gtfs import LVB, active_services, now_local, realtime, rows, seconds, seconds_of_day, stop_times
+
+LEAD = 30 * 60  # trips starting within the next 30 min count as running
+
+
+def main() -> None:
+    """Print the coverage for the feed folder given on the command line."""
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("folder", type=Path, help="gtfs.de feed folder with gtfs.zip and rt.pb")
+    folder = p.parse_args().folder
+
+    routes = {r["route_id"]: r for r in rows(folder, "routes.txt")}
+    trips = {t["trip_id"]: t for t in rows(folder, "trips.txt") if routes[t["route_id"]]["agency_id"] == LVB}
+    now = now_local()
+    active = active_services(folder, now.date())
+    today = {t for t, v in trips.items() if v["service_id"] in active}
+    print("LVB trips total", len(trips), "today", len(today))
+
+    # first and last time of each of today's trips
+    span: dict[str, tuple[int, int]] = {}
+    for trip, dep, arr in stop_times(folder, "trip_id", "departure_time", "arrival_time"):
+        if trip in today:
+            x = seconds(dep or arr)
+            lo, hi = span.get(trip, (x, x))
+            span[trip] = (min(lo, x), max(hi, x))
+
+    ns = seconds_of_day(now)
+    running = {t for t, (lo, hi) in span.items() if lo - LEAD <= ns <= hi}
+    with_rt = {e.trip_update.trip.trip_id for e in realtime(folder).entity if e.HasField("trip_update")}
+    covered = running & with_rt
+    share = 100 * len(covered) / max(1, len(running))
+    print(f"running now (incl. starting within 30 min): {len(running)}, with realtime: {len(covered)} ({share:.0f} %)")
+    missing = collections.Counter(routes[trips[t]["route_id"]]["route_short_name"] for t in running - with_rt)
+    print("missing by line:", missing.most_common(15))
+
+
+if __name__ == "__main__":
+    main()
