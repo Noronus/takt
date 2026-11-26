@@ -19,6 +19,9 @@ data class SavedPlace(val name: String, val station: String? = null, val lat: Do
 
 @Serializable data class FavRoute(val from: SavedPlace, val to: SavedPlace)
 
+/** A station picked in a list or search (not on the map), with the time it was last picked (epoch ms). */
+@Serializable data class HistoryEntry(val station: String, val at: Long)
+
 /** Everything that exists only on this device, for "Einstellungen exportieren". The token only on request. */
 @Serializable
 data class ConfigExport(
@@ -99,6 +102,17 @@ class Prefs(ctx: Context) {
     val mapLive: StateFlow<Boolean> = _mapLive
     fun toggleMapLive() { _mapLive.value = !_mapLive.value; sp.edit().putBoolean("mapLive", _mapLive.value).commit() }
 
+    /** Recently picked stations, newest first, each once, at most [HISTORY_MAX]. */
+    private val histSer = ListSerializer(HistoryEntry.serializer())
+    private val _history = MutableStateFlow(runCatching { json.decodeFromString(histSer, sp.getString("history", "[]")!!) }.getOrDefault(emptyList()))
+    val history: StateFlow<List<HistoryEntry>> = _history
+
+    fun recordStation(id: String) {
+        val l = listOf(HistoryEntry(id, System.currentTimeMillis())) + _history.value.filter { it.station != id }
+        _history.value = l.take(HISTORY_MAX)
+        sp.edit().putString("history", json.encodeToString(histSer, _history.value)).apply()
+    }
+
     private val _favStations = MutableStateFlow(sp.getString("favStations", "")!!.split('\n').filter { it.isNotBlank() })
     val favStations: StateFlow<List<String>> = _favStations
 
@@ -125,6 +139,8 @@ class Prefs(ctx: Context) {
 
     fun isFavRoute(from: SavedPlace, to: SavedPlace) =
         _favRoutes.value.any { it.from.param() == from.param() && it.to.param() == to.param() }
+
+    companion object { const val HISTORY_MAX = 20 }
 
     private val pretty = Json { prettyPrint = true; encodeDefaults = false; ignoreUnknownKeys = true }
 

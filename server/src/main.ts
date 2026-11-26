@@ -7,7 +7,7 @@ import { config } from './config.ts'
 import { initData, onStaticChange, state, busy, paths } from './data.ts'
 import { rt, startRt, loadTripIds, touchApp, pollNow } from './rt.ts'
 import { initAuth, authHook, headersHook, viaProxy, limited } from './security.ts'
-import { insaStationId, insaDepartures, insaAlerts, loadInsaMap, normLine, type InsaDep } from './insa.ts'
+import { insaStationId, insaDepartures, insaAlerts, insaAlertsAge, loadInsaMap, normLine, type InsaDep } from './insa.ts'
 
 // ---------- stations ----------
 
@@ -206,6 +206,9 @@ const rtInfo = () => {
     fetchedAt: rt.fetchedAt ? Math.round(rt.fetchedAt / 1000) : null,
   }
 }
+
+// only the age of the realtime data, for screens without live data of their own (cheap: no MOTIS call)
+app.get('/api/v1/rt', async () => ({ rt: rtInfo() }))
 
 app.get('/api/v1/status', async req => {
   const motisState = await motis('/api/v1/health', {}, 3000).then(() => 'ok', (e: any) => e.message)
@@ -585,7 +588,8 @@ app.get('/api/v1/vehicles', async (req, reply) => {
 
 app.get('/api/v1/alerts', async (_req, reply) => {
   if (!config.insaEnabled) return { alerts: [] }
-  try { return { alerts: await insaAlerts() } } catch (e: any) {
+  // age: how old the cached INSA messages are, so the app shows their real age and not the time since its request
+  try { const alerts = await insaAlerts(); return { alerts, age: insaAlertsAge() } } catch (e: any) {
     console.log(`[api] alerts: ${e.message}`)
     return reply.code(502).send({ error: 'Störungsmeldungen nicht abrufbar' })
   }

@@ -156,7 +156,10 @@ data class VehicleSeg(
 )
 @Serializable data class VehiclesResponse(val now: Long = 0, val rt: RtInfo = RtInfo(), val vehicles: List<VehicleSeg> = emptyList())
 
-@Serializable data class AlertsResponse(val alerts: List<Alert> = emptyList())
+/** [age]: seconds since the server fetched these messages from INSA (it keeps them a few minutes). */
+@Serializable data class RtResponse(val rt: RtInfo = RtInfo())
+
+@Serializable data class AlertsResponse(val alerts: List<Alert> = emptyList(), val age: Long? = null)
 
 @Serializable
 data class GeoMatch(

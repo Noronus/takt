@@ -66,3 +66,23 @@ fun rememberDepartures(station: String, intervalMs: Long = 20_000, stops: String
     }
     return live to load
 }
+
+/** Age of the server's realtime data, refreshed every [intervalMs] while the screen is visible. */
+@Composable
+fun rememberRtAge(intervalMs: Long = 20_000): Live<app.takt.data.RtResponse> {
+    val repo = TaktApp.instance.repo
+    val live = remember { Live<app.takt.data.RtResponse>() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                live.loading = true
+                try { live.data = repo.rt(); live.error = null }
+                catch (e: CancellationException) { throw e } catch (e: Exception) { live.error = e.message ?: e.javaClass.simpleName }
+                finally { live.loading = false }
+                delay(if (live.error != null) 8_000 else intervalMs)
+            }
+        }
+    }
+    return live
+}

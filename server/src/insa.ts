@@ -84,6 +84,12 @@ const inBox = (lat: number, lon: number) => {
   return lat >= b.minLat && lat <= b.maxLat && lon >= b.minLon && lon <= b.maxLon
 }
 
+/** Seconds since the alerts in the cache were fetched from INSA (0 if there are none yet). */
+export function insaAlertsAge(): number {
+  const c = cache.get('alerts')
+  return c ? Math.max(0, Math.round((Date.now() - c.at) / 1000)) : 0
+}
+
 export async function insaAlerts(): Promise<Alert[]> {
   return cached('alerts', 5 * 60_000, async () => {
     const r: any = await withTimeout(client.remarks({ results: 500 }), 15_000)

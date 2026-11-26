@@ -73,7 +73,9 @@ import app.takt.data.SavedPlace
 import app.takt.data.Timed
 import app.takt.data.countdown
 import app.takt.data.delayMin
+import app.takt.data.Station
 import app.takt.data.distText
+import app.takt.data.lastUsedText
 import app.takt.data.durationText
 import app.takt.data.hhmm
 import kotlinx.coroutines.CancellationException
@@ -116,6 +118,7 @@ private fun merge(pages: List<Timed<PlanResponse>>): Timed<PlanResponse> {
     return Timed(v, oldest.receivedAtMs, oldest.feedAgeAtReceive)
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun JourneyScreen(nav: Nav) {
     val app = TaktApp.instance
@@ -211,20 +214,12 @@ fun JourneyScreen(nav: Nav) {
     val guidedState by app.guide.active.collectAsState()
     @Suppress("UNUSED_VARIABLE") val g0 = guidedState
     val nowS = nowMs() / 1000
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), state = listState, contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
-        stickyHeader {
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        // title, start/destination and Ab/An: fixed above the list (only the connections scroll and stretch)
+            Column(Modifier.fillMaxWidth()) {
             ScreenTitle("Route", age = if (live.data != null || live.loading || live.error != null) ({ AgeChip(live.data, live.loading, live.error, compact = true) }) else null) {
-                if (f != null && t != null) {
-                    val fav = favRoutes.any { it.from.param() == f.param() && it.to.param() == t.param() }
-                    IconButton(onClick = { app.prefs.toggleFavRoute(FavRoute(f, t)) }) {
-                        Icon(if (fav) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Route merken", tint = if (fav) Palette.warn else MaterialTheme.colorScheme.onSurface)
-                    }
-                }
                 SettingsButton(nav)
             }
-        }
-        item { GuideBanner(nav, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) }
-        item {
             RouteCard(
                 from = f?.let { shortName(it.name) }, to = t?.let { shortName(it.name) },
                 fromHint = "Start", toHint = "Ziel",
@@ -237,14 +232,29 @@ fun JourneyScreen(nav: Nav) {
                 },
                 onClear = { job?.cancel(); clearJourney(); live.data = null; live.error = null },
             )
-        }
-        item {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Segmented(listOf("Ab", "An"), if (PlanState.arriveBy) 1 else 0) { PlanState.arriveBy = it == 1; search() }
                 PillButton(PlanState.time?.let { dayTime(it) } ?: "Jetzt", Icons.Rounded.Schedule, primary = false, onClick = { timeDialog = true })
                 if (PlanState.time != null) TextButton(onClick = { PlanState.time = null; search() }) { Text("Jetzt") }
+                // remember this route: on the right, in line with Ab/An
+                Spacer(Modifier.weight(1f))
+                if (f != null && t != null) {
+                    val fav = favRoutes.any { it.from.param() == f.param() && it.to.param() == t.param() }
+                    IconButton(onClick = { app.prefs.toggleFavRoute(FavRoute(f, t)) }) {
+                        Icon(if (fav) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Route merken", tint = if (fav) Palette.warn else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
             }
-        }
+            }
+    // pull down: search the shown connections again
+    val (pulling, onPull) = rememberPullRefresh { load(PlanState.cursors.ifEmpty { listOf(null) }) }
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = pulling || live.loading && live.data != null, onRefresh = onPull,
+        modifier = Modifier.fillMaxWidth().weight(1f),
+    ) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, overscrollEffect = rememberListOverscroll(listState),
+        contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
+        item { GuideBanner(nav, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) }
         item { ErrorLine(live.error) }
 
         val guided = app.guide.active.value?.itinerary
@@ -290,6 +300,8 @@ fun JourneyScreen(nav: Nav) {
             }
             if (res.next != null) item(key = "later") { Centered(if (PlanState.loadingMore == 1) "lädt …" else "Später") { more(false) } }
         }
+    }
+    }
     }
 
     picking?.let { which ->
@@ -517,8 +529,11 @@ private fun LegDetail(l: Leg, nav: Nav) {
 
 /** Full-screen picker: current position, favourites, nearby stops, stop search, addresses. */
 @Composable
-fun PlacePicker(title: String, onDismiss: () -> Unit, onPick: (SavedPlace) -> Unit) {
+fun PlacePicker(title: String, onDismiss: () -> Unit, record: Boolean = true, onPick: (SavedPlace) -> Unit) {
     val app = TaktApp.instance
+    val history by app.prefs.history.collectAsState()
+    // picked stations go into the history (shown below, newest first)
+    val pickStation = { s: Station -> if (record) app.prefs.recordStation(s.id); onPick(SavedPlace(s.name, s.id)) }
     var q by remember { mutableStateOf("") }
     var geo by remember { mutableStateOf<List<GeoMatch>>(emptyList()) }
     val favIds by app.prefs.favStations.collectAsState()
@@ -553,20 +568,20 @@ fun PlacePicker(title: String, onDismiss: () -> Unit, onPick: (SavedPlace) -> Un
                         val favs = favIds.mapNotNull { app.stations.get(it) }
                         if (favs.isNotEmpty()) {
                             item { SectionTitle("Favoriten") }
-                            items(favs, key = { "f" + it.id }) { s -> PickRow(Icons.Rounded.Star, s.shortName, null, Palette.warn) { onPick(SavedPlace(s.name, s.id)) } }
+                            items(favs, key = { "f" + it.id }) { s -> PickRow(Icons.Rounded.Star, s.shortName, null, Palette.warn) { pickStation(s) } }
                         }
-                        val l = Position.loc
-                        if (l != null) {
-                            item { SectionTitle("In der Nähe") }
-                            items(app.stations.nearby(l.latitude, l.longitude, 8), key = { "n" + it.station.id }) { n ->
-                                val m = stationModes(n.station.modes).firstOrNull() ?: "bus"
-                                PickRow(modeIcon(m), n.station.shortName, distText(n.meters), modeColor(m)) { onPick(SavedPlace(n.station.name, n.station.id)) }
+                        val recent = history.mapNotNull { h -> app.stations.get(h.station)?.let { it to h.at } }
+                        if (recent.isNotEmpty()) {
+                            item { SectionTitle("Zuletzt gewählt") }
+                            items(recent, key = { "h" + it.first.id }) { (s, at) ->
+                                val m = stationModes(s.modes).firstOrNull() ?: "bus"
+                                PickRow(modeIcon(m), s.shortName, lastUsedText(at), modeColor(m)) { pickStation(s) }
                             }
                         }
                     } else {
                         items(app.stations.search(q, 15), key = { "s" + it.id }) { s ->
                             val m = stationModes(s.modes).firstOrNull() ?: "bus"
-                            PickRow(modeIcon(m), s.shortName, null, modeColor(m)) { onPick(SavedPlace(s.name, s.id)) }
+                            PickRow(modeIcon(m), s.shortName, null, modeColor(m)) { pickStation(s) }
                         }
                         if (geo.isNotEmpty()) {
                             item { SectionTitle("Adressen und Orte") }

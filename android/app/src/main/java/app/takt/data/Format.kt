@@ -8,6 +8,18 @@ private val hm = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefa
 
 fun hhmm(epochS: Long?): String = if (epochS == null) "--:--" else hm.format(Instant.ofEpochSecond(epochS))
 
+/** When something was last used: "heute, 10:42", "gestern, 10:42", "24.11." or "24.11.2025". */
+fun lastUsedText(epochMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    val zone = ZoneId.systemDefault()
+    val d = Instant.ofEpochMilli(epochMs).atZone(zone)
+    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    return when (d.toLocalDate()) {
+        today -> "heute, ${hm.format(d)}"
+        today.minusDays(1) -> "gestern, ${hm.format(d)}"
+        else -> if (d.year == today.year) "%02d.%02d.".format(d.dayOfMonth, d.monthValue) else "%02d.%02d.%d".format(d.dayOfMonth, d.monthValue, d.year)
+    }
+}
+
 /** "42 s", "3 min 05 s", "1 h 12 min". */
 fun ageText(s: Long): String = when {
     s < 60 -> "$s s"

@@ -65,7 +65,7 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
         val d = live.data
         if (d == null || d.ageSeconds() > 120) load()
     }
-    PullToRefreshBox(isRefreshing = live.loading && live.data != null, onRefresh = load, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
         val nq = Stations.norm(q)
         val picked by app.prefs.alertLines.collectAsState()
         val all = live.data?.value?.alerts.orEmpty()
@@ -75,11 +75,12 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
             (picked.isEmpty() || a.lines.any { it in picked }) &&
                 (nq.isBlank() || Stations.norm("${a.title} ${a.text} ${a.company} ${a.lines.joinToString(" ")} ${a.stops.joinToString(" ")}").contains(nq))
         }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
-            stickyHeader { ScreenTitle("Störungen", age = { AgeChip(live.data, live.loading, live.error, compact = true) }) { SettingsButton(nav) } }
-            item { ErrorLine(live.error) }
-            item { SearchField(q, { q = it }, "Linie, Haltestelle, Stichwort") }
-            if (lines.isNotEmpty() || picked.isNotEmpty()) item {
+        // title, search and line filter: fixed above the list (only the list scrolls and stretches)
+        run {
+              Column(Modifier.fillMaxWidth()) {
+                ScreenTitle("Störungen", age = { AgeChip(live.data, live.loading, live.error, compact = true) }) { SettingsButton(nav) }
+                SearchField(q, { q = it }, "Linie, Haltestelle, Stichwort")
+                if (lines.isNotEmpty() || picked.isNotEmpty()) {
                 var menu by remember { mutableStateOf(false) }
                 Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     val label = if (picked.isEmpty()) "Alle Linien" else "Linien: " + picked.map(::lineLabel).sorted().joinToString(", ")
@@ -105,7 +106,14 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
                         )
                     }
                 }
-            }
+                }
+              }
+        }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        PullToRefreshBox(isRefreshing = live.loading && live.data != null, onRefresh = load, modifier = Modifier.fillMaxWidth().weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, overscrollEffect = rememberListOverscroll(listState),
+            contentPadding = PaddingValues(bottom = LocalBottomInset.current + 8.dp)) {
+            item { ErrorLine(live.error) }
             if (list.isEmpty() && live.data != null) item { Text("Keine Meldungen.", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(list, key = { it.id }) { a ->
                 val accent = if (a.products.any { it == "tram" || it == "suburban" || it == "regional" }) Palette.tram else Palette.warn
@@ -138,6 +146,7 @@ fun AlertsScreen(@Suppress("UNUSED_PARAMETER") nav: Nav) {
                 }
             }
             item { Text("Quelle: INSA / Nahverkehr Sachsen-Anhalt (inoffiziell)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp)) }
+        }
         }
     }
 }

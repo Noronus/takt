@@ -118,7 +118,7 @@ fun SettingsScreen(nav: Nav) {
             }
             Text("Verbindungen mit Umstieg an diesen Haltestellen werden vorgezogen, solange sie nicht mehr als die gewählte Zeit kosten. Direkte Verbindungen bleiben immer.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
-            if (pickPreferred) PlacePicker("Bevorzugter Umstieg", onDismiss = { pickPreferred = false }) { p ->
+            if (pickPreferred) PlacePicker("Bevorzugter Umstieg", onDismiss = { pickPreferred = false }, record = false) { p ->
                 pickPreferred = false
                 if (p.station != null && preferred.none { it.station == p.station }) app.prefs.setPreferred(preferred + p)
                 else if (p.station == null) status = "Bitte eine Haltestelle wählen, keine Adresse."

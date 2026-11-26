@@ -62,6 +62,7 @@ import app.takt.data.ageText
 import app.takt.data.delayMin
 import app.takt.data.hhmm
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Space the floating bottom bar needs below scrollable content. */
 val LocalBottomInset = staticCompositionLocalOf<Dp> { 0.dp }
@@ -401,4 +402,36 @@ fun SettingsButton(nav: Nav) {
     androidx.compose.material3.IconButton(onClick = nav::settings) {
         Icon(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen")
     }
+}
+
+/**
+ * State for pull-to-refresh. The indicator only goes away after isRefreshing was true for at least one frame:
+ * a refresh that finishes at once (a cached position, nothing to search) would leave it hanging. So the flag
+ * stays on for [minMs] at least.
+ */
+@Composable
+fun rememberPullRefresh(minMs: Long = 600, action: suspend () -> Unit): Pair<Boolean, () -> Unit> {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val refreshing = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    return refreshing.value to {
+        if (!refreshing.value) scope.launch {
+            refreshing.value = true
+            val t0 = System.currentTimeMillis()
+            try { action() } finally {
+                delay((minMs - (System.currentTimeMillis() - t0)).coerceAtLeast(0))
+                refreshing.value = false
+            }
+        }
+    }
+}
+
+/**
+ * Overscroll (the stretch at the ends) only for a list that can actually scroll; a list that fits on the
+ * screen stays still.
+ */
+@Composable
+fun rememberListOverscroll(state: androidx.compose.foundation.lazy.LazyListState): androidx.compose.foundation.OverscrollEffect? {
+    val effect = androidx.compose.foundation.rememberOverscrollEffect()
+    val canScroll by androidx.compose.runtime.remember(state) { androidx.compose.runtime.derivedStateOf { state.canScrollForward || state.canScrollBackward } }
+    return if (canScroll) effect else null
 }

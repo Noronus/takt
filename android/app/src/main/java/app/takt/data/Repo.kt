@@ -67,9 +67,15 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
     suspend fun next(stations: List<String>): NextResponse =
         api.getJson("/api/v1/next", mapOf("stations" to stations.joinToString(",")), attempts = 1)
 
+    /** Age of the server's realtime data only (for the nearby list, which has no departures). */
+    suspend fun rt(): Timed<RtResponse> {
+        val r: RtResponse = api.getJson("/api/v1/rt", attempts = 1)
+        return Timed(r, System.currentTimeMillis(), r.rt.feedAge)
+    }
+
     suspend fun alerts(): Timed<AlertsResponse> {
         val r: AlertsResponse = api.getJson("/api/v1/alerts")
-        return Timed(r, System.currentTimeMillis(), null)
+        return Timed(r, System.currentTimeMillis(), r.age)
     }
 
     suspend fun geocode(text: String): List<GeoMatch> = api.getJson("/api/v1/geocode", mapOf("text" to text), attempts = 1)
