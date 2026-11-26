@@ -32,7 +32,12 @@ export interface State {
   trips?: number
   stations?: number
   stationsVersion?: string
+  stationsFormat?: number
 }
+
+// Version of the stations.json layout. Raise it when the server writes something new into it (2: platforms with
+// their stop ids); a list in an older layout is then built again at the next start, without new downloads.
+const STATIONS_FORMAT = 2
 
 export let state: State = {}
 export let busy = ''
@@ -114,6 +119,7 @@ async function buildGtfs() {
   state.trips = trips
   state.stations = stations.length
   state.stationsVersion = sj.version
+  state.stationsFormat = STATIONS_FORMAT
   state.gtfsBuiltFrom = await rawIds()
   log(`${stations.length} Haltestellen gesamt`)
 }
@@ -143,6 +149,10 @@ export async function refresh(force = false) {
     }
 
     let gtfsMissing = !(await exists(paths.stations))
+    if (!gtfsMissing && state.stationsFormat !== STATIONS_FORMAT) {
+      log(`Haltestellenliste im alten Format (${state.stationsFormat ?? 1}), wird neu gebaut`)
+      gtfsMissing = true
+    }
     for (const d of config.datasets) if (!(await exists(join(paths.motisInput, `${d.tag}.gtfs.zip`)))) gtfsMissing = true
     if (force || gtfsMissing || daysSince(state.gtfsCheckedAt) >= config.gtfsRefreshDays - 0.5) {
       busy = 'GTFS'
