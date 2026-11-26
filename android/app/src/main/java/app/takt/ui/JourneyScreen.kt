@@ -309,6 +309,7 @@ fun JourneyScreen(nav: Nav) {
         PlacePicker(
             title = if (which == 0) "Start" else "Ziel",
             onDismiss = { picking = null },
+            current = if (which == 0) JourneyState.from else JourneyState.to,
             onPick = { p -> if (which == 0) JourneyState.from = p else JourneyState.to = p; picking = null },
         )
     }
@@ -530,12 +531,13 @@ private fun LegDetail(l: Leg, nav: Nav) {
 
 /** Full-screen picker: current position, favourites, nearby stops, stop search, addresses. */
 @Composable
-fun PlacePicker(title: String, onDismiss: () -> Unit, record: Boolean = true, onPick: (SavedPlace) -> Unit) {
+fun PlacePicker(title: String, onDismiss: () -> Unit, record: Boolean = true, current: SavedPlace? = null, onPick: (SavedPlace) -> Unit) {
     val app = TaktApp.instance
     val history by app.prefs.history.collectAsState()
     // picked stations go into the history (shown below, newest first)
     val pickStation = { s: Station -> if (record) app.prefs.recordStation(s.id); onPick(SavedPlace(s.name, s.id)) }
-    var q by remember { mutableStateOf("") }
+    // reopened for a filled field: its place stays as the search text (not the automatic "Mein Standort")
+    var q by remember { mutableStateOf(current?.takeIf { !it.isMyLocation() }?.let { shortName(it.name) } ?: "") }
     var geo by remember { mutableStateOf<List<GeoMatch>>(emptyList()) }
     val favIds by app.prefs.favStations.collectAsState()
     val focus = remember { FocusRequester() }

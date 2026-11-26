@@ -634,6 +634,8 @@ fun MapScreen(nav: Nav) {
         PlacePicker(
             title = if (which == 0) "Start" else "Ziel",
             onDismiss = { picking = null; panelStart = null },
+            // the fields below show their place as search text again; "Ziel wählen" from the panel starts empty
+            current = if (panelStart != null) null else if (which == 0) JourneyState.from else JourneyState.to,
             onPick = { p ->
                 // from the panel: that station becomes the start together with the picked destination (a cancel changes nothing)
                 panelStart?.let { JourneyState.from = it }
