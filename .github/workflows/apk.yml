@@ -1,0 +1,62 @@
+name: APK
+# builds the signed release APK when a release is published and attaches it to the release;
+# by hand (Actions -> APK -> Run workflow) for an existing release tag, e.g. after adding the secrets
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach to (e.g. v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   ANDROID_KEYSTORE_BASE64   the release keystore, base64 encoded (base64 -w0 release.jks)
+#   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Optional repository variable TAKT_SERVER: default server URL built into the app.
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '27'
+      - name: Keystore
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KS" ]; then echo "::error::ANDROID_KEYSTORE_BASE64 is not set, an unsigned APK cannot be installed"; exit 1; fi
+          echo "$KS" | base64 -d > android/release.jks
+          printf 'storeFile=release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > android/keystore.properties
+      - name: Build
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -PtaktServer="${{ vars.TAKT_SERVER }}"
+      - name: Attach to the release
+        run: |
+          V="${TAG#v}"
+          APK="takt-$V.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          gh release upload "$TAG" "$APK" --clobber
+          # signing certificate in the release notes, so people can check the APK
+          SIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          SHA=$("$SIGNER" verify --print-certs "$APK" | sed -n 's/.*SHA-256 digest: //p' | head -1)
+          BODY=$(gh release view "$TAG" --json body -q .body)
+          if [ -n "$SHA" ] && ! grep -q "$SHA" <<<"$BODY"; then
+            gh release edit "$TAG" --notes "$(printf '%s\n\nSHA-256 Signaturzertifikat: `%s`\n' "$BODY" "$SHA")"
+          fi
+      - name: Remove keystore
+        if: always()
+        run: rm -f android/release.jks android/keystore.properties
