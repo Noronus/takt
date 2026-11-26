@@ -113,6 +113,11 @@ class Prefs(ctx: Context) {
         sp.edit().putString("history", json.encodeToString(histSer, _history.value)).apply()
     }
 
+    /** Platform dots on the map show the platform number (default) instead of the next line. */
+    var platCode by androidx.compose.runtime.mutableStateOf(sp.getBoolean("platCode", true))
+        private set
+    fun changePlatCode(v: Boolean) { platCode = v; sp.edit().putBoolean("platCode", v).apply() }
+
     /** Favourites section on the nearby tab folded away (the stars in the lists stay). */
     private val _favCollapsed = MutableStateFlow(sp.getBoolean("favCollapsed", false))
     val favCollapsed: StateFlow<Boolean> = _favCollapsed

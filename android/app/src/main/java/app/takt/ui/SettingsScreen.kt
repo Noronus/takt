@@ -102,6 +102,15 @@ fun SettingsScreen(nav: Nav) {
             Text("So lange bleiben abgefahrene Fahrten in den Abfahrtslisten stehen. 0 = aus, höchstens 120.", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(24.dp))
+            Text("Steige auf der Karte", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.FilterChip(selected = !app.prefs.platCode, onClick = { app.prefs.changePlatCode(false) }, label = { Text("Nächste Linie") })
+                androidx.compose.material3.FilterChip(selected = app.prefs.platCode, onClick = { app.prefs.changePlatCode(true) }, label = { Text("Steignummer") })
+            }
+            Text("Was in den einzelnen Steig-Punkten steht, wenn man nah heranzoomt. Haltestellen-Punkte zeigen immer die nächste Linie.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+
+            Spacer(Modifier.height(24.dp))
             Text("Bevorzugte Umstiege", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             val preferred by app.prefs.preferred.collectAsState()
             var pickPreferred by remember { mutableStateOf(false) }

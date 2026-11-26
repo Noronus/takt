@@ -197,14 +197,22 @@ class MapHolder(ctx: Context) {
                 circleStrokeColor(stroke),
                 circleStrokeWidth(interpolate(linear(), zoom(), stop(10, 0.5f), stop(15, 2f))),
             ).apply { minZoom = PLAT_ZOOM; setFilter(has("plat")) })
-            // line of the next departure on each platform dot (source filled by PlatformLines)
+            // labels from PlatformLines: next line (or the platform number, see settings) on each platform dot ...
             .withLayer(SymbolLayer("pl-code", "pl-live").withProperties(
                 textField(get("line")),
                 textFont(arrayOf("Noto Sans Regular")),
                 textSize(interpolate(linear(), zoom(), stop(16, 8.5f), stop(18, 11f))),
                 textColor("#FFFFFF"),
                 textAllowOverlap(true), textIgnorePlacement(true),
-            ).apply { minZoom = PLAT_ZOOM })
+            ).apply { minZoom = PLAT_ZOOM; setFilter(eq(get("kind"), "pl")) })
+            // ... and the next line on each station dot, as long as the station is drawn as one dot
+            .withLayer(SymbolLayer("st-code", "pl-live").withProperties(
+                textField(get("line")),
+                textFont(arrayOf("Noto Sans Regular")),
+                textSize(interpolate(linear(), zoom(), stop(14.5, 7.5f), stop(17, 10f))),
+                textColor("#FFFFFF"),
+                textAllowOverlap(true), textIgnorePlacement(true),
+            ).apply { minZoom = PlatformLines.LABEL_ZOOM.toFloat(); setFilter(all(eq(get("kind"), "st"), any(eq(get("pl"), 0), lt(zoom(), PLAT_ZOOM)))) })
             .withLayer(CircleLayer("sel-ring", "sel").withProperties(
                 circleRadius(15f), circleColor("#3DDC97"), circleOpacity(0.25f),
                 circleStrokeColor("#3DDC97"), circleStrokeWidth(3f),
