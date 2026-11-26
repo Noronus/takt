@@ -19,8 +19,14 @@ data class SavedPlace(val name: String, val station: String? = null, val lat: Do
 
 @Serializable data class FavRoute(val from: SavedPlace, val to: SavedPlace)
 
-/** A station picked in a list or search (not on the map), with the time it was last picked (epoch ms). */
-@Serializable data class HistoryEntry(val station: String, val at: Long)
+/**
+ * A station picked in a list or search (not on the map), or an address ([place], [station] empty), with the time
+ * it was last picked (epoch ms).
+ */
+@Serializable data class HistoryEntry(val station: String = "", val at: Long = 0, val place: SavedPlace? = null) {
+    /** Same entry = same station, or the same address. */
+    val key: String get() = station.ifBlank { place?.param() ?: "" }
+}
 
 /** Everything that exists only on this device, for "Einstellungen exportieren". The token only on request. */
 @Serializable
@@ -107,8 +113,14 @@ class Prefs(ctx: Context) {
     private val _history = MutableStateFlow(runCatching { json.decodeFromString(histSer, sp.getString("history", "[]")!!) }.getOrDefault(emptyList()))
     val history: StateFlow<List<HistoryEntry>> = _history
 
-    fun recordStation(id: String) {
-        val l = listOf(HistoryEntry(id, System.currentTimeMillis())) + _history.value.filter { it.station != id }
+    fun recordStation(id: String) = record(HistoryEntry(id, System.currentTimeMillis()))
+
+    /** A picked place: a station by its id, an address with its name and position. */
+    fun recordPlace(p: SavedPlace) =
+        if (p.station != null) recordStation(p.station) else record(HistoryEntry("", System.currentTimeMillis(), p))
+
+    private fun record(e: HistoryEntry) {
+        val l = listOf(e) + _history.value.filter { it.key != e.key }
         _history.value = l.take(HISTORY_MAX)
         sp.edit().putString("history", json.encodeToString(histSer, _history.value)).apply()
     }

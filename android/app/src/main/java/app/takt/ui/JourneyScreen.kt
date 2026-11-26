@@ -573,12 +573,20 @@ fun PlacePicker(title: String, onDismiss: () -> Unit, record: Boolean = true, cu
                             item { SectionTitle("Favoriten") }
                             items(favs, key = { "f" + it.id }) { s -> PickRow(Icons.Rounded.Star, s.shortName, null, Palette.warn) { pickStation(s) } }
                         }
-                        val recent = history.mapNotNull { h -> app.stations.get(h.station)?.let { it to h.at } }
+                        // stations and addresses picked before, newest first
+                        val recent = history.filter { h -> h.place != null || app.stations.get(h.station) != null }
                         if (recent.isNotEmpty()) {
                             item { SectionTitle("Zuletzt gewählt") }
-                            items(recent, key = { "h" + it.first.id }) { (s, at) ->
-                                val m = stationModes(s.modes).firstOrNull() ?: "bus"
-                                PickRow(modeIcon(m), s.shortName, lastUsedText(at), modeColor(m)) { pickStation(s) }
+                            items(recent, key = { "h" + it.key }) { h ->
+                                val s = app.stations.get(h.station)
+                                if (s != null) {
+                                    val m = stationModes(s.modes).firstOrNull() ?: "bus"
+                                    PickRow(modeIcon(m), s.shortName, lastUsedText(h.at), modeColor(m)) { pickStation(s) }
+                                } else h.place?.let { p ->
+                                    PickRow(Icons.Rounded.Home, p.name, lastUsedText(h.at), MaterialTheme.colorScheme.onSurfaceVariant) {
+                                        if (record) app.prefs.recordPlace(p); onPick(p)
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -590,7 +598,9 @@ fun PlacePicker(title: String, onDismiss: () -> Unit, record: Boolean = true, cu
                             item { SectionTitle("Adressen und Orte") }
                             items(geo, key = { "g${it.lat},${it.lon},${it.name}" }) { g ->
                                 PickRow(Icons.Rounded.Home, g.name, g.area.ifBlank { null }, MaterialTheme.colorScheme.onSurfaceVariant) {
-                                    onPick(SavedPlace(g.name + if (g.area.isNotBlank()) ", ${g.area}" else "", g.station, g.lat, g.lon))
+                                    val p = SavedPlace(g.name + if (g.area.isNotBlank()) ", ${g.area}" else "", g.station, g.lat, g.lon)
+                                    if (record) app.prefs.recordPlace(p)
+                                    onPick(p)
                                 }
                             }
                         }
