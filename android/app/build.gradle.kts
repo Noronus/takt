@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
@@ -45,6 +44,7 @@ android {
             if (keystoreProps.isNotEmpty()) signingConfig = signingConfigs.getByName("release")
         }
     }
+    // bytecode for Android (ART): stays at 17 whatever JDK runs the build; Kotlin follows this target
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -52,8 +52,6 @@ android {
     buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
-
-kotlin { jvmToolchain(17) }
 
 dependencies {
     val bom = platform("androidx.compose:compose-bom:2025.06.00")
