@@ -75,10 +75,6 @@ fun SettingsScreen(nav: Nav) {
                         app.stations.refresh()
                     }
                 }) { Text("Speichern & testen") }
-                Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = { scope.launch { status = if (app.stations.refresh()) "Haltestellenliste aktualisiert" else "Liste ist aktuell (oder Server nicht erreichbar)" } }) {
-                    Text("Haltestellen laden")
-                }
             }
             status?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
             Text("${stations.size} Haltestellen offline gespeichert (Stand ${app.stations.version.ifBlank { "–" }})", fontSize = 13.sp,

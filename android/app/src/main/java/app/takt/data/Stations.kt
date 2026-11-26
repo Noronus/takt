@@ -78,8 +78,15 @@ class Stations(private val ctx: Context, private val api: Api) {
             ?.takeIf { file.exists() }
     }
 
-    /** Fetches a newer list if the server has one (ETag). Silent on errors. */
+    private var lastCheck = 0L
+
+    /** [refresh], but at most every [minGapMs]: for the checks when the app comes to the front and while it is open. */
+    suspend fun refreshIfDue(minGapMs: Long): Boolean =
+        if (System.currentTimeMillis() - lastCheck < minGapMs) false else refresh()
+
+    /** Fetches a newer list if the server has one (ETag, so an unchanged list costs one small request). Silent on errors. */
     suspend fun refresh(): Boolean = withContext(Dispatchers.IO) {
+        lastCheck = System.currentTimeMillis()
         try {
             val (body, newTag) = api.get("/api/v1/stations", etag = etag, attempts = 2)
             if (body == null) return@withContext false

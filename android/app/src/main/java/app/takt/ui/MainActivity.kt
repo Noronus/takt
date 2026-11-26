@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
@@ -184,6 +186,16 @@ private fun Root() {
         }
         lifecycle.addObserver(obs)
         onDispose { lifecycle.removeObserver(obs) }
+    }
+    // the server rebuilds the stations list now and then (weekly, or after an update): look for a newer one
+    // whenever the app comes to the front (at most every 5 min) and every 15 min while it is open
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                app.takt.TaktApp.instance.stations.refreshIfDue(5 * 60_000L)
+                kotlinx.coroutines.delay(15 * 60_000L)
+            }
+        }
     }
     val nc = rememberNavController()
     val tab = rememberSaveable { mutableIntStateOf(Tabs.MAP) }
