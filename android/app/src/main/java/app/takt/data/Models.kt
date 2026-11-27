@@ -163,6 +163,14 @@ data class VehicleSeg(
 /** [age]: seconds since the server fetched these messages from INSA (it keeps them a few minutes). */
 @Serializable data class RtResponse(val rt: RtInfo = RtInfo())
 
+/** One data source of the server (settings screen). [updated]: unix s of the data itself, [fetched]: last successful fetch. */
+@Serializable
+data class DataSource(
+    val name: String = "", val role: String = "", val active: Boolean = false,
+    val updated: Long? = null, val fetched: Long? = null, val info: String? = null, val error: String? = null,
+)
+@Serializable data class SourcesResponse(val now: Long = 0, val sources: List<DataSource> = emptyList())
+
 @Serializable data class AlertsResponse(val alerts: List<Alert> = emptyList(), val age: Long? = null)
 
 @Serializable

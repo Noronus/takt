@@ -73,6 +73,9 @@ class Repo(ctx: Context, private val api: Api, private val prefs: Prefs) {
         return Timed(r, System.currentTimeMillis(), r.rt.feedAge)
     }
 
+    /** The server's data sources with their age (settings screen); one try only, it is asked again soon. */
+    suspend fun sources(): SourcesResponse = api.getJson("/api/v1/sources", attempts = 1)
+
     suspend fun alerts(): Timed<AlertsResponse> {
         val r: AlertsResponse = api.getJson("/api/v1/alerts")
         return Timed(r, System.currentTimeMillis(), r.age)

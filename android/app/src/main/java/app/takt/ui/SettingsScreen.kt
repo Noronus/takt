@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -79,6 +81,9 @@ fun SettingsScreen(nav: Nav) {
             status?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
             Text("${stations.size} Haltestellen offline gespeichert (Stand ${app.stations.version.ifBlank { "–" }})", fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 8.dp))
+
+            Spacer(Modifier.height(24.dp))
+            DataSources()
 
             Spacer(Modifier.height(24.dp))
             Text("Vergangene Fahrten", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -222,6 +227,66 @@ fun SettingsScreen(nav: Nav) {
             )
         }
     }
+}
+
+/** Which sources the server uses right now and how fresh each is; refreshed every 10 s, ages tick every second. */
+@Composable
+private fun DataSources() {
+    val repo = TaktApp.instance.repo
+    var list by remember { mutableStateOf<app.takt.data.SourcesResponse?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    // server clock minus phone clock, so ages are right even if the phone's clock is off
+    var skew by remember { mutableStateOf(0L) }
+    var now by remember { mutableStateOf(System.currentTimeMillis() / 1000) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                val r = repo.sources()
+                list = r; error = null; skew = r.now - System.currentTimeMillis() / 1000
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { error = e.message }
+            repeat(10) { now = System.currentTimeMillis() / 1000; kotlinx.coroutines.delay(1_000) }
+        }
+    }
+    Text("Datenquellen", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+    val l = list
+    when {
+        l == null && error != null -> Text("Nicht abrufbar: $error", fontSize = 13.sp, color = Palette.bad, modifier = Modifier.padding(top = 4.dp))
+        l == null -> Text("lädt …", fontSize = 13.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
+        else -> for (s in l.sources) {
+            val serverNow = now + skew
+            val age = s.updated?.let { (serverNow - it).coerceAtLeast(0) }
+            val fetchedAge = s.fetched?.let { (serverNow - it).coerceAtLeast(0) }
+            // the timetable is days old by design: only realtime sources get the traffic-light colours
+            val realtime = age == null || age < 86_400
+            val color = when {
+                s.error != null || !s.active -> Palette.bad
+                !realtime -> Palette.ok
+                (age ?: fetchedAge ?: Long.MAX_VALUE) < 90 -> Palette.ok
+                (age ?: fetchedAge ?: Long.MAX_VALUE) < 300 -> Palette.warn
+                else -> Palette.bad
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.Top) {
+                androidx.compose.foundation.layout.Box(
+                    Modifier.padding(top = 5.dp, end = 10.dp).size(10.dp)
+                        .background(color, androidx.compose.foundation.shape.CircleShape),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(s.name + if (s.active) "" else " (inaktiv)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    if (s.role.isNotBlank()) Text(s.role, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                    val times = buildList {
+                        if (s.updated != null) add(if (realtime) "Daten ${app.takt.data.ageText(age!!)} alt" else "Stand ${app.takt.data.lastUsedText(s.updated * 1000)}")
+                        if (fetchedAge != null && realtime) add("abgerufen vor ${app.takt.data.ageText(fetchedAge)}")
+                        else if (s.fetched != null && !realtime) add("geprüft ${app.takt.data.lastUsedText(s.fetched * 1000)}")
+                        if (s.updated == null && s.fetched == null) add("noch nie abgerufen")
+                    }
+                    Text(times.joinToString(" · "), fontSize = 13.sp, color = color)
+                    s.info?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline) }
+                    s.error?.let { Text("Fehler: $it", fontSize = 12.sp, color = Palette.bad) }
+                }
+            }
+        }
+    }
+    if (l != null && error != null) Text("Letzte Aktualisierung fehlgeschlagen: $error", fontSize = 12.sp, color = Palette.warn, modifier = Modifier.padding(top = 6.dp))
 }
 
 private fun sizeText(b: Long): String = when {
