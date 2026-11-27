@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config } from './config.ts'
 import { initData, onStaticChange, state, busy, paths } from './data.ts'
-import { rt, startRt, loadTripIds, touchApp, pollNow, pluginInfo } from './rt.ts'
+import { rt, startRt, loadTripIds, touchApp, pollNow, pluginInfo, isActive } from './rt.ts'
 import { initAuth, authHook, headersHook, viaProxy, limited } from './security.ts'
 import { loadPlugins, loaded as plugins } from './plugins.ts'
 import { insaStationId, insaDepartures, insaAlerts, insaAlertsAge, insaHealth, loadInsaMap, normLine, type InsaDep } from './insa.ts'
@@ -239,7 +239,7 @@ app.get('/api/v1/sources', async () => {
   if (config.insaEnabled) list.push({
     name: 'INSA Auskunft', role: 'Bahnsteige, Störungsmeldungen, Lücken in der Echtzeit (nur bei Bedarf gefragt)',
     active: !insaHealth.error, updated: null, fetched: s(insaHealth.okAt),
-    info: insaHealth.okAt ? null : 'seit dem Serverstart noch nicht gebraucht', error: insaHealth.error || null,
+    info: insaHealth.okAt ? 'Störungsmeldungen alle 5 min, solange die App benutzt wird' : 'seit dem Serverstart noch nicht abgefragt', error: insaHealth.error || null,
   })
   // the date of the timetable itself: Last-Modified of the gtfs.de download it was built from
   const built = Date.parse((state.gtfsBuiltFrom || '').split('|').pop() || '')
@@ -650,5 +650,8 @@ await loadInsaMap()
 await initData()
 await startRt()
 await loadPlugins()
+// while the app is in use, keep the disruption messages warm (INSA, cached 5 min): the alerts tab opens
+// at once and the data sources list shows whether INSA answers
+if (config.insaEnabled) setInterval(() => { if (isActive()) insaAlerts().catch(() => {}) }, 60_000)
 await app.listen({ host: '0.0.0.0', port: config.port })
 console.log(`Takt läuft auf :${config.port}`)
