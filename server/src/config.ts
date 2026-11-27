@@ -29,6 +29,8 @@ export const config = {
   rtActiveInterval: num('RT_ACTIVE_INTERVAL', 30),
   rtIdleInterval: num('RT_IDLE_INTERVAL', 300),
   activeWindow: num('ACTIVE_WINDOW', 900),
+  // how often MOTIS reads our filtered feed (it changes every DELFI poll and with every plug-in update)
+  motisRtInterval: num('MOTIS_RT_INTERVAL', 15),
   gtfsRefreshDays: num('GTFS_REFRESH_DAYS', 7),
   osmRefreshDays: num('OSM_REFRESH_DAYS', 30),
   refreshHour: num('REFRESH_HOUR', 3),

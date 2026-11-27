@@ -13,10 +13,14 @@ const mapFile = join(config.dataDir, 'static', 'insa-map.json')
 let stationMap: Record<string, string | null> = {}
 const cache = new Map<string, { at: number, p: Promise<any> }>()
 
+// last successful INSA answer and last error, for the app's list of data sources
+export const insaHealth = { okAt: 0, error: '' }
+
 async function cached<T>(key: string, ttlMs: number, f: () => Promise<T>): Promise<T> {
   const c = cache.get(key)
   if (c && Date.now() - c.at < ttlMs) return c.p
   const p = f()
+  p.then(() => { insaHealth.okAt = Date.now(); insaHealth.error = '' }, (e: any) => { insaHealth.error = e?.message || 'Fehler' })
   cache.set(key, { at: Date.now(), p })
   p.catch(() => cache.delete(key))
   if (cache.size > 2000) for (const [k, v] of cache) if (Date.now() - v.at > 600_000) cache.delete(k)

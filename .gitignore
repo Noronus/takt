@@ -15,3 +15,6 @@ phase0/comp.yaml
 phase0/motis-openapi.yaml
 __pycache__/
 .ruff_cache/
+
+# private data sources (only for our own server, see server/src/plugins.ts)
+private/

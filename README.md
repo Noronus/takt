@@ -44,11 +44,16 @@ Every live view shows a chip such as `Daten 42 s alt` or `Daten 3 min 05 s alt` 
 | `GET /api/v1/alerts` | disruption messages in the area |
 | `GET /api/v1/vehicles?min=lat,lon&max=lat,lon&zoom=` | running trips in a box (MOTIS railviz): stop-to-stop pieces with realtime times and path; the app moves the vehicles along them |
 | `GET /api/v1/geocode?text=` | addresses and places |
+| `GET /api/v1/sources` | each data source with its role, data age, last fetch and error (shown in the app's settings) |
 | `GET /api/v1/status` | data state, realtime stats, MOTIS health |
 
 Bearer token per person in `DATA/tokens.txt` (`./tokens.sh add NAME`), or a single `API_TOKEN`.
 
 **Without a token the API has no login.** It then answers only in the LAN/VPN and refuses requests that came through a proxy. To share the app with friends over the internet, see [docs/public-access.md](docs/public-access.md) (NetBird reverse proxy, per-person tokens, rate limits).
+
+## Private plug-ins
+
+Sources whose terms allow only private use are not part of this repository. Put them as `*.ts` modules in `private/` (gitignored). `deploy.sh` copies them to `DATA/private/`, where image updates leave them alone; `./deploy.sh --private` copies them and restarts Takt. The server loads them at start (`server/src/plugins.ts`). A plug-in can supply fresher TripUpdates, which replace DELFI's for the same trip before MOTIS reads the feed. If a plug-in fails, the server runs on DELFI alone.
 
 ## Deploy
 

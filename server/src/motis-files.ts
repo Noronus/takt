@@ -24,7 +24,7 @@ timetable:
   adjust_footpaths: true
   merge_dupes_intra_src: true
   link_stop_distance: 100
-  update_interval: ${Math.max(20, config.rtActiveInterval)}
+  update_interval: ${Math.max(10, config.motisRtInterval)}
   http_timeout: 20
   incremental_rt_update: false
   max_footpath_length: 15

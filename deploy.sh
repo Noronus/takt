@@ -5,6 +5,8 @@
 #        ./deploy.sh --local    build the image from this checkout instead and upload it (unreleased changes)
 #        ./deploy.sh --motis    also recreate Takt-MOTIS (e.g. after a MOTIS version change)
 #        ./deploy.sh --seed DIR copy prepared data from DIR (cache/, static/, motis/input/) first
+#        ./deploy.sh --private  only copy private/ (plug-ins, not in git) and restart Takt
+# private/ (gitignored) is copied to DATA/private/ on every deploy; image updates leave it alone.
 # TAKT_IMAGE in deploy.env picks another image or tag (default ghcr.io/noronus/takt:latest).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -13,8 +15,23 @@ source deploy.env
 : "${DEPLOY_SSH:?}" "${DEPLOY_HOST:?}"
 API_PORT=${API_PORT:-8097}; MOTIS_PORT=${MOTIS_PORT:-8098}; DATA=${DATA:-/mnt/user/appdata/takt}; MOTIS_VERSION=${MOTIS_VERSION:-2.11}; REQUIRE_TOKEN=${REQUIRE_TOKEN:-false}
 IMAGE=${TAKT_IMAGE:-ghcr.io/noronus/takt:latest}
-RECREATE_MOTIS=0; SEED=""; LOCAL=0
-while [ $# -gt 0 ]; do case "$1" in --motis) RECREATE_MOTIS=1;; --local) LOCAL=1;; --seed) SEED="$2"; shift;; esac; shift; done
+RECREATE_MOTIS=0; SEED=""; LOCAL=0; ONLY_PRIVATE=0
+while [ $# -gt 0 ]; do case "$1" in --motis) RECREATE_MOTIS=1;; --local) LOCAL=1;; --seed) SEED="$2"; shift;; --private) ONLY_PRIVATE=1;; esac; shift; done
+
+# private plug-ins: the folder on the server mirrors private/ (removed files go away)
+sync_private() {
+  if [ -d private ] && ls private/*.ts >/dev/null 2>&1; then
+    echo "== private plug-ins: $(cd private && ls *.ts | tr '\n' ' ')"
+    tar -C private -cf - $(cd private && ls *.ts) | $DEPLOY_SSH "rm -rf $DATA/private && mkdir -p $DATA/private && tar -C $DATA/private -xf - && chown -R 99:100 $DATA/private && chmod 700 $DATA/private"
+  else
+    $DEPLOY_SSH "rm -rf $DATA/private"
+  fi
+}
+if [ "$ONLY_PRIVATE" = 1 ]; then
+  sync_private
+  $DEPLOY_SSH "docker restart Takt >/dev/null"
+  echo "Done: Takt restarted"; exit 0
+fi
 [ "$LOCAL" = 1 ] && IMAGE=takt:local
 
 render() {
@@ -47,6 +64,8 @@ if [ -n "$SEED" ]; then
   tar -C "$SEED" -cf - --exclude='cache/osm' --exclude='motis/build-*' --exclude='motis/current' --exclude='motis/run.sh' \
       cache static motis/input state.json | $DEPLOY_SSH "tar -C $DATA -xf - && chown -R 99:100 $DATA"
 fi
+
+sync_private
 
 echo "== container Takt"
 $DEPLOY_SSH "docker rm -f Takt >/dev/null 2>&1; docker run -d --name Takt --user=99:100 --restart=unless-stopped \

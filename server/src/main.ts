@@ -5,9 +5,10 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config } from './config.ts'
 import { initData, onStaticChange, state, busy, paths } from './data.ts'
-import { rt, startRt, loadTripIds, touchApp, pollNow } from './rt.ts'
+import { rt, startRt, loadTripIds, touchApp, pollNow, pluginInfo } from './rt.ts'
 import { initAuth, authHook, headersHook, viaProxy, limited } from './security.ts'
-import { insaStationId, insaDepartures, insaAlerts, insaAlertsAge, loadInsaMap, normLine, type InsaDep } from './insa.ts'
+import { loadPlugins, loaded as plugins } from './plugins.ts'
+import { insaStationId, insaDepartures, insaAlerts, insaAlertsAge, insaHealth, loadInsaMap, normLine, type InsaDep } from './insa.ts'
 
 // ---------- stations ----------
 
@@ -186,11 +187,13 @@ function unixTime(v: string | undefined): Date | undefined | null {
 // feed timestamp of the realtime data MOTIS last fetched, per dataset. MOTIS polls on its own
 // schedule, so its data can be older than ours; departures and journeys come from MOTIS.
 const motisFeed: Record<string, number> = {}
+let motisFetchedAt = 0
 app.get('/rt/:tag.pb', async (req, reply) => {
   const tag = (req.params as any).tag
   const pb = rt.pb[tag]
   if (!pb) return reply.code(404).send()
   motisFeed[tag] = rt.feedTimestamp
+  motisFetchedAt = Date.now()
   return reply.type('application/x-protobuf').send(Buffer.from(pb))
 })
 
@@ -210,6 +213,45 @@ const rtInfo = () => {
 // only the age of the realtime data, for screens without live data of their own (cheap: no MOTIS call)
 app.get('/api/v1/rt', async () => ({ rt: rtInfo() }))
 
+// what the app's settings list: each source, what it is used for and how fresh it is.
+// updated: unix s of the data itself; fetched: unix s of our last successful fetch; null = never
+app.get('/api/v1/sources', async () => {
+  const s = (ms: number) => ms ? Math.round(ms / 1000) : null
+  const list: any[] = [{
+    name: 'DELFI Echtzeit (gtfs.de)', role: 'Verspätungen und Ausfälle für Bus, Tram und Bahn',
+    active: true, updated: rt.delfiTimestamp || null, fetched: s(rt.fetchedAt),
+    info: `${rt.tripUpdates} Fahrten im Gebiet`, error: rt.error || null,
+  }]
+  for (const [name, p] of pluginInfo) {
+    const o = rt.overlay[name]
+    list.push({
+      name: p.label, role: p.role || 'Aktuellere Verspätungen', active: !!o && o.trips > 0 && !p.error,
+      updated: o?.ts || null, fetched: s(p.fetchedAt),
+      info: o ? `${o.trips} Fahrten, davon ${o.replaced} statt DELFI` : null, error: p.error || null,
+    })
+  }
+  const mf = Object.values(motisFeed).filter(Boolean)
+  list.push({
+    name: 'MOTIS', role: 'Abfahrten, Verbindungen und Fahrzeuge auf der Karte (aus den Quellen oben)',
+    active: !!motisFetchedAt, updated: mf.length ? Math.min(...mf) : null, fetched: s(motisFetchedAt),
+    info: `liest die Echtzeit alle ${Math.max(10, config.motisRtInterval)} s`, error: null,
+  })
+  if (config.insaEnabled) list.push({
+    name: 'INSA Auskunft', role: 'Bahnsteige, Störungsmeldungen, Lücken in der Echtzeit (nur bei Bedarf gefragt)',
+    active: !insaHealth.error, updated: null, fetched: s(insaHealth.okAt),
+    info: insaHealth.okAt ? null : 'seit dem Serverstart noch nicht gebraucht', error: insaHealth.error || null,
+  })
+  // the date of the timetable itself: Last-Modified of the gtfs.de download it was built from
+  const built = Date.parse((state.gtfsBuiltFrom || '').split('|').pop() || '')
+  list.push({
+    name: 'Fahrplan (DELFI über gtfs.de)', role: 'Soll-Fahrplan und Haltestellen, wöchentlich geprüft', active: !!state.motisVersion,
+    updated: built ? Math.round(built / 1000) : null,
+    fetched: state.gtfsCheckedAt ? Math.round(Date.parse(state.gtfsCheckedAt) / 1000) : null,
+    info: state.trips ? `${state.trips} Fahrten, ${state.stations} Haltestellen` : null, error: state.lastError || null,
+  })
+  return { now: Math.round(Date.now() / 1000), sources: list }
+})
+
 app.get('/api/v1/status', async req => {
   const motisState = await motis('/api/v1/health', {}, 3000).then(() => 'ok', (e: any) => e.message)
   // through the proxy: only what the app's connection test shows, no internal hosts or errors
@@ -221,7 +263,7 @@ app.get('/api/v1/status', async req => {
 })
 
 const statusFull = (motisState: string) => ({
-  state, busy, stations: stations.size,
+  state, busy, stations: stations.size, plugins,
   rt: { ...rt, pb: undefined, pbBytes: Object.fromEntries(Object.entries(rt.pb).map(([k, v]) => [k, v.length])) },
   motis: motisState,
 })
@@ -607,5 +649,6 @@ await loadStations()
 await loadInsaMap()
 await initData()
 await startRt()
+await loadPlugins()
 await app.listen({ host: '0.0.0.0', port: config.port })
 console.log(`Takt läuft auf :${config.port}`)
