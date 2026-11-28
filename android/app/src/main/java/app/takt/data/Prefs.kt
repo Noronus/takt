@@ -45,6 +45,8 @@ data class ConfigExport(
     val preferred: List<SavedPlace> = emptyList(),
     val preferSlack: Int? = null,
     val alertLines: List<String> = emptyList(),
+    val hiddenModes: List<String>? = null,
+    val accent: String? = null,
 )
 
 class Prefs(ctx: Context) {
@@ -107,6 +109,20 @@ class Prefs(ctx: Context) {
     private val _mapLive = MutableStateFlow(sp.getBoolean("mapLive", false))
     val mapLive: StateFlow<Boolean> = _mapLive
     fun toggleMapLive() { _mapLive.value = !_mapLive.value; sp.edit().putBoolean("mapLive", _mapLive.value).commit() }
+
+    /** Modes the user does not want to see (map, live vehicles, departures, nearby): keys of [ModeFilter.OPTIONS]. */
+    private val _hiddenModes = MutableStateFlow(sp.getString("hiddenModes", "")!!.split(',').filter { it.isNotBlank() }
+        .flatMap { if (it == "bus") listOf("citybus", "regiobus", "coach") else listOf(it) }.toSet())
+    val hiddenModes: StateFlow<Set<String>> = _hiddenModes
+    fun setModeShown(mode: String, shown: Boolean) {
+        val s = if (shown) _hiddenModes.value - mode else _hiddenModes.value + mode
+        _hiddenModes.value = s; sp.edit().putString("hiddenModes", s.joinToString(",")).commit()
+    }
+
+    /** Accent colour: a key of ACCENTS in Theme.kt, or "system" (wallpaper colours). */
+    private val _accent = MutableStateFlow(sp.getString("accent", "green")!!)
+    val accent: StateFlow<String> = _accent
+    fun setAccent(k: String) { _accent.value = k; sp.edit().putString("accent", k).commit() }
 
     /** Recently picked stations, newest first, each once, at most [HISTORY_MAX]. */
     private val histSer = ListSerializer(HistoryEntry.serializer())
@@ -171,6 +187,7 @@ class Prefs(ctx: Context) {
         animScale = animScale, mapDark = _mapDark.value, mapSat = _mapSat.value, mapLive = _mapLive.value, pastMin = pastMin,
         favStations = _favStations.value, favRoutes = _favRoutes.value,
         preferred = _preferred.value, preferSlack = preferSlack, alertLines = _alertLines.value.toList(),
+        hiddenModes = _hiddenModes.value.toList(), accent = _accent.value,
     ))
 
     /** Applies an export; favourites are merged, settings replaced. Returns a short summary. */
@@ -185,6 +202,8 @@ class Prefs(ctx: Context) {
         c.mapLive?.let { if (it != _mapLive.value) toggleMapLive() }
         c.pastMin?.let { changePastMin(it) }
         c.preferSlack?.let { changePreferSlack(it) }
+        c.accent?.let { setAccent(it) }
+        c.hiddenModes?.let { h -> _hiddenModes.value = h.toSet(); sp.edit().putString("hiddenModes", h.joinToString(",")).commit() }
         val st = (_favStations.value + c.favStations).distinct()
         _favStations.value = st; sp.edit().putString("favStations", st.joinToString("\n")).commit()
         val rt = (_favRoutes.value + c.favRoutes).distinctBy { it.from.param() + ">" + it.to.param() }

@@ -49,7 +49,7 @@ export async function insaStationId(st: { id: string, name: string, lat: number,
 
 export interface InsaDep {
   line: string; direction: string; planned: number; when: number | null; delay: number | null
-  cancelled: boolean; platform: string | null; plannedPlatform: string | null; product: string; tripId: string
+  cancelled: boolean; platform: string | null; plannedPlatform: string | null; product: string; operator: string; tripId: string
   remarks: string[]
 }
 
@@ -72,6 +72,7 @@ export async function insaDepartures(insaId: string, from: Date, minutes: number
       platform: (d.platform && /^\d{4,}$/.test(d.platform) ? d.plannedPlatform : d.platform) || null,
       plannedPlatform: d.plannedPlatform || null,
       product: d.line?.product || '',
+      operator: d.line?.operator?.name || '',
       tripId: d.tripId || '',
       remarks: (d.remarks || []).filter((x: any) => x.type === 'warning').map((x: any) => x.summary || x.text).filter(Boolean),
     }))

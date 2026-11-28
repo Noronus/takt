@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import app.takt.TaktApp
 import app.takt.data.Geometry
 import app.takt.data.VehicleSeg
@@ -65,7 +66,9 @@ object LiveVehicles {
         val t = nowMs / 1000
         val sb = StringBuilder("{\"type\":\"FeatureCollection\",\"features\":[")
         var first = true
+        val hidden = TaktApp.instance.prefs.hiddenModes.value
         for (tr in tracks.values) {
+            if (!tr.segs.first().s.let { ModeFilter.shown(it.cat, it.mode, hidden) }) continue
             val segs = tr.segs
             // running piece, or waiting at the stop between two pieces; not yet started / long arrived: hidden
             val running = segs.firstOrNull { t >= it.s.dep && t <= it.s.arr }

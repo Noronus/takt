@@ -8,6 +8,8 @@ import { initData, onStaticChange, state, busy, paths } from './data.ts'
 import { rt, startRt, loadTripIds, touchApp, pollNow, pluginInfo, isActive } from './rt.ts'
 import { initAuth, authHook, headersHook, viaProxy, limited } from './security.ts'
 import { loadPlugins, loaded as plugins } from './plugins.ts'
+import { loadTripCats, tripCatOf, catOfMotis } from './cats.ts'
+import { catOf, catName, type CatName } from './gtfs.ts'
 import { insaStationId, insaDepartures, insaAlerts, insaAlertsAge, insaHealth, loadInsaMap, normLine, type InsaDep } from './insa.ts'
 
 // ---------- stations ----------
@@ -61,7 +63,7 @@ const isRail = (m: AppMode) => m === 'sbahn' || m === 'train'
 const sec = (iso?: string) => iso ? Math.round(Date.parse(iso) / 1000) : null
 
 interface Dep {
-  trip: string; line: string; mode: AppMode; color: string | null; textColor: string | null
+  trip: string; line: string; mode: AppMode; cat: CatName; color: string | null; textColor: string | null
   dir: string; t: number; rt: number | null; cancelled: boolean
   track: string | null; plannedTrack: string | null; stop: string; src: 'delfi' | 'insa' | null
   stopId: string | null   // MOTIS id of the platform it leaves from (matches the platform ids in stations.json)
@@ -86,6 +88,7 @@ function fromStopTime(s: any): Dep {
     trip: s.tripId,
     line,
     mode: appMode(s.mode, line),
+    cat: catOfMotis(s, line),
     color: s.routeColor ? `#${s.routeColor}` : null,
     textColor: s.routeTextColor ? `#${s.routeTextColor}` : null,
     dir: s.headsign || s.tripTo?.name || '',
@@ -139,8 +142,10 @@ async function insaFallback(st: Station, from: Date, minutes: number): Promise<D
   return list.map(d => {
     const mode: AppMode = d.product === 'tram' ? 'tram' : d.product === 'bus' ? 'bus' : d.product === 'suburban' ? 'sbahn'
       : ['regional', 'national', 'nationalExpress'].includes(d.product) ? 'train' : 'other'
+    const line = d.line.replace(/^(Str|Bus)\s+/, '')
+    const cat: CatName = mode === 'bus' ? catName(catOf(3, line, d.operator)) : mode === 'other' ? 'other' : mode
     return {
-      trip: d.tripId, line: d.line.replace(/^(Str|Bus)\s+/, ''), mode, color: null, textColor: null, dir: d.direction,
+      trip: d.tripId, line, mode, cat, color: null, textColor: null, dir: d.direction,
       t: d.planned, rt: d.when ?? (d.delay !== null ? d.planned + d.delay : null), cancelled: d.cancelled,
       track: d.platform, plannedTrack: d.plannedPlatform, stop: st.name, src: d.delay !== null || d.cancelled ? 'insa' : null, notes: d.remarks, info: [], stopId: null,
     }
@@ -309,7 +314,7 @@ app.get('/api/v1/next', async (req, reply) => {
         .sort((a, b) => (a.rt ?? a.t) - (b.rt ?? b.t))
       const body: Record<string, any> = {}
       for (const d of deps) if (d.stopId && !body[d.stopId])
-        body[d.stopId] = { line: d.line, mode: d.mode, color: d.color, textColor: d.textColor, t: d.t, rt: d.rt }
+        body[d.stopId] = { line: d.line, mode: d.mode, cat: d.cat, color: d.color, textColor: d.textColor, t: d.t, rt: d.rt }
       nextCache.set(id, { at: Date.now(), body })
       out[id] = body
     } catch (e: any) {
@@ -387,6 +392,7 @@ function mapLeg(l: any) {
   const transit = !['WALK', 'BIKE', 'CAR', 'RENTAL', 'FLEX'].includes(l.mode)
   return {
     mode: transit ? appMode(l.mode, line) : 'walk',
+    cat: transit ? catOfMotis(l, line) : null,
     line, trip: l.tripId || null,
     color: l.routeColor ? `#${l.routeColor}` : null, textColor: l.routeTextColor ? `#${l.routeTextColor}` : null,
     dir: l.headsign || '',
@@ -554,7 +560,7 @@ app.get('/api/v1/trip', async (req, reply) => {
       track: p.track || null, cancelled: !!p.cancelled,
     }))
     const tline = leg.displayName || leg.routeShortName || ''
-    return { line: tline, mode: appMode(leg.mode, tline), color: leg.routeColor ? `#${leg.routeColor}` : null, dir: leg.headsign || '', realtime: !!leg.realTime, cancelled: !!leg.cancelled, rt: rtInfo(), stops }
+    return { line: tline, mode: appMode(leg.mode, tline), cat: catOfMotis(leg, tline), color: leg.routeColor ? `#${leg.routeColor}` : null, dir: leg.headsign || '', realtime: !!leg.realTime, cancelled: !!leg.cancelled, rt: rtInfo(), stops }
   } catch (e: any) {
     console.log(`[api] trip: ${e.message}`)
     return reply.code(502).send({ error: 'Fahrt nicht abrufbar' })
@@ -614,7 +620,7 @@ app.get('/api/v1/vehicles', async (req, reply) => {
     const vehicles = (Array.isArray(segs) ? segs : []).flatMap((sg: any) => (sg.trips || []).slice(0, 1).map((t: any) => {
       const line = t.displayName || t.routeShortName || ''
       return {
-        trip: t.tripId, line, mode: appMode(sg.mode, line),
+        trip: t.tripId, line, mode: appMode(sg.mode, line), cat: tripCatOf(t.tripId),
         color: sg.routeColor ? `#${sg.routeColor}` : null,
         dep: sec(sg.departure), arr: sec(sg.arrival), rt: !!sg.realTime,
         to: (typeof sg.to === 'object' ? sg.to?.name : null) || null,
@@ -644,8 +650,9 @@ app.get('/api/v1/alerts', async (_req, reply) => {
 // ---------- start ----------
 
 await initAuth()
-onStaticChange(async () => { await loadTripIds(); pollNow(); await loadStations() })
+onStaticChange(async () => { await loadTripIds(); pollNow(); await loadStations(); await loadTripCats() })
 await loadStations()
+loadTripCats().catch(() => {})
 await loadInsaMap()
 await initData()
 await startRt()

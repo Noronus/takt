@@ -36,8 +36,9 @@ export interface State {
 }
 
 // Version of the stations.json layout. Raise it when the server writes something new into it (2: platforms with
-// their stop ids); a list in an older layout is then built again at the next start, without new downloads.
-const STATIONS_FORMAT = 2
+// their stop ids, 3: CAT bits per station and platform); a list in an older layout is then built again at the
+// next start, without new downloads.
+const STATIONS_FORMAT = 3
 
 export let state: State = {}
 export let busy = ''

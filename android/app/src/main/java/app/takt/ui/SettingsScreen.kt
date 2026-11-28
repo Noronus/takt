@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Wallpaper
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -81,6 +92,44 @@ fun SettingsScreen(nav: Nav) {
             status?.let { Text(it, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
             Text("${stations.size} Haltestellen offline gespeichert (Stand ${app.stations.version.ifBlank { "–" }})", fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 8.dp))
+
+            Spacer(Modifier.height(24.dp))
+            Text("Akzentfarbe", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            val accent by app.prefs.accent.collectAsState()
+            val darkUi = androidx.compose.foundation.isSystemInDarkTheme()
+            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val options = ACCENTS.map { it.key to it.label } + (if (dynamicAccent) listOf("system" to "Hintergrundbild") else emptyList())
+                for ((key, label) in options) {
+                    val c = parseColor(accentHex(key, darkUi, ctx)) ?: MaterialTheme.colorScheme.primary
+                    val sel = key == accent
+                    Box(Modifier.size(44.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c)
+                        .then(if (sel) Modifier.border(3.dp, MaterialTheme.colorScheme.onBackground, androidx.compose.foundation.shape.CircleShape) else Modifier)
+                        .clickable(onClickLabel = label) { app.prefs.setAccent(key) }
+                        .semantics { contentDescription = label; selected = sel },
+                        contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        if (key == "system") Icon(Icons.Rounded.Wallpaper, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(20.dp))
+                        else if (sel) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
+                    }
+                }
+            }
+            Text((ACCENTS.firstOrNull { it.key == accent }?.label ?: "Farben vom Hintergrundbild") + ". Pünktlich/verspätet bleibt grün, gelb und rot.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 6.dp))
+
+            Spacer(Modifier.height(24.dp))
+            Text("Verkehrsmittel", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            val hiddenModes by app.prefs.hiddenModes.collectAsState()
+            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                for ((key, label) in ModeFilter.OPTIONS) {
+                    val on = key !in hiddenModes
+                    androidx.compose.material3.FilterChip(selected = on, onClick = { app.prefs.setModeShown(key, !on) }, label = { Text(label) },
+                        leadingIcon = { val m = if (key.endsWith("bus") || key == "coach") "bus" else key
+                            Icon(modeIcon(m), null, tint = if (on) modeColor(m) else MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp)) })
+                }
+            }
+            Text("Nur diese werden auf der Karte, als Live-Fahrzeug, in den Abfahrten und in der Nähe-Liste gezeigt. Haltestellen bleiben, solange dort noch ein gewähltes Verkehrsmittel fährt. Schienenersatzverkehr zählt zur S-Bahn oder zum Zug, den er ersetzt. Die Routensuche nutzt weiter alle.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(24.dp))
             DataSources()

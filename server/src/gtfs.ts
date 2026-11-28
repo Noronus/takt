@@ -34,7 +34,7 @@ function lines(zip: string, member: string): AsyncIterable<string> {
   return createInterface({ input: p.stdout, crlfDelay: Infinity })
 }
 
-async function* rows(zip: string, member: string): AsyncGenerator<{ h: Record<string, number>, r: string[], raw: string }> {
+export async function* rows(zip: string, member: string): AsyncGenerator<{ h: Record<string, number>, r: string[], raw: string }> {
   let h: Record<string, number> | null = null
   for await (let line of lines(zip, member)) {
     if (!line) continue
@@ -89,6 +89,27 @@ export function modeOf(routeType: number, shortName: string): number {
   return MODE.other
 }
 
+// Finer categories for the app's "Verkehrsmittel" filter: buses split by operator (city, regional, long distance),
+// rail replacement buses count as the rail line they replace.
+export const CAT = { tram: 1, sbahn: 2, train: 4, citybus: 8, regiobus: 16, coach: 32, ferry: 64, other: 128 }
+export type CatName = keyof typeof CAT
+const CITY_BUS = /^(LVB|Leipziger Verkehrsbetriebe|Hallesche Verkehrs|HAVAG|Jenaer Nahverkehr|Verkehrs- und Betriebsgesellschaft Gera|GVB|Dresdner Verkehrsbetriebe|DVB|Chemnitzer Verkehrs|CVAG|Erfurter Verkehrsbetriebe|EVAG|Magdeburger Verkehrsbetriebe|MVB|Dessauer Verkehrs|DVG)\b/i
+const COACH = /flixbus|blablacar|eurolines|regiojet|ecolines|bus ?express|fernbus/i
+
+export function catOf(routeType: number, shortName: string, agency: string): number {
+  const m = modeOf(routeType, shortName)
+  if (m === MODE.tram) return CAT.tram
+  if (m === MODE.suburban) return CAT.sbahn
+  if (m === MODE.rail) return CAT.train
+  if (m === MODE.ferry) return CAT.ferry
+  if (m !== MODE.bus) return CAT.other
+  if ((routeType >= 200 && routeType < 300) || COACH.test(agency)) return CAT.coach
+  if (/^S\s?\d/.test(shortName)) return CAT.sbahn
+  if (/^(RE|RB|IRE|IC|ICE)\s?\d/.test(shortName)) return CAT.train
+  return CITY_BUS.test(agency) ? CAT.citybus : CAT.regiobus
+}
+export const catName = (bit: number): CatName => (Object.entries(CAT).find(([, v]) => v === bit)?.[0] as CatName) || 'other'
+
 // ---------- filter ----------
 
 export interface Station {
@@ -97,13 +118,14 @@ export interface Station {
   lat: number
   lon: number
   modes: number
+  cats: number          // CAT bits of the vehicles stopping here
   stopIds: string[]     // all MOTIS stop ids (merged duplicates, both datasets); children are resolved by MOTIS
   deps: number
   plats: Platform[]     // where the vehicles actually stop; the map shows them one by one when zoomed in
 }
 
-// one stopping point of a station: [lat, lon, platform code, modes, MOTIS stop ids]
-export type Platform = [number, number, string, number, string[]]
+// one stopping point of a station: [lat, lon, platform code, modes, MOTIS stop ids, CAT bits]
+export type Platform = [number, number, string, number, string[], number]
 
 export interface FilterResult { trips: number, stops: number, stations: Station[], tripIds: Set<string> }
 
@@ -135,10 +157,14 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
   const routeMode = new Map<string, number>()
   const routeRaw = new Map<string, string>()
   const routeAgency = new Map<string, string>()
+  const routeCat = new Map<string, number>()
+  const agencyName = new Map<string, string>()
+  for await (const { h, r } of rows(srcZip, 'agency.txt')) if (r.length) agencyName.set(r[h.agency_id] || '', r[h.agency_name] || '')
   let routesHeader = ''
   for await (const { h, r, raw } of rows(srcZip, 'routes.txt')) {
     if (!r.length) { routesHeader = raw; continue }
     routeMode.set(r[h.route_id], modeOf(Number(r[h.route_type]), r[h.route_short_name] || ''))
+    routeCat.set(r[h.route_id], catOf(Number(r[h.route_type]), r[h.route_short_name] || '', agencyName.get(r[h.agency_id] || '') || ''))
     routeRaw.set(r[h.route_id], raw)
     routeAgency.set(r[h.route_id], r[h.agency_id] || '')
   }
@@ -153,6 +179,7 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
   const usedStops = new Set<string>()
   const stopDeps = new Map<string, number>()
   const stopModes = new Map<string, number>()
+  const stopCats = new Map<string, number>()
   let cur = ''
   let buf: string[] = []
   let bufStops: string[] = []
@@ -162,11 +189,13 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
     if (hit && buf.length) {
       keptTrips.add(cur)
       const m = routeMode.get(tripRoute.get(cur) || '') || MODE.other
+      const c = routeCat.get(tripRoute.get(cur) || '') || CAT.other
       for (const l of buf) await st.line(l)
       for (const s of bufStops) {
         usedStops.add(s)
         stopDeps.set(s, (stopDeps.get(s) || 0) + 1)
         stopModes.set(s, (stopModes.get(s) || 0) | m)
+        stopCats.set(s, (stopCats.get(s) || 0) | c)
       }
     }
     buf = []; bufStops = []; hit = false
@@ -246,14 +275,15 @@ export async function filterGtfs(srcZip: string, outZip: string, tag: string, lo
     const base = stops.get(key)!
     let x = st2.get(key)
     if (!x) {
-      x = { id: `${tag}_${key}`, name: base.name, lat: base.lat, lon: base.lon, modes: 0, stopIds: [`${tag}_${key}`], deps: 0, plats: [] }
+      x = { id: `${tag}_${key}`, name: base.name, lat: base.lat, lon: base.lon, modes: 0, cats: 0, stopIds: [`${tag}_${key}`], deps: 0, plats: [] }
       st2.set(key, x)
       plats.set(key, new Map())
     }
     x.modes |= stopModes.get(id) || 0
+    x.cats |= stopCats.get(id) || 0
     x.deps += stopDeps.get(id) || 0
     // only stops with departures are platforms (the parent itself has none when it has children)
-    if (stopDeps.get(id)) plats.get(key)!.set(id, [s.lat, s.lon, s.code, stopModes.get(id) || 0, [`${tag}_${id}`]])
+    if (stopDeps.get(id)) plats.get(key)!.set(id, [s.lat, s.lon, s.code, stopModes.get(id) || 0, [`${tag}_${id}`], stopCats.get(id) || 0])
   }
   for (const [key, x] of st2) x.plats = [...plats.get(key)!.values()]
   const stations = [...st2.values()].filter(s => s.deps > 0 && inBox(s.lat, s.lon))
@@ -292,6 +322,7 @@ export function mergeDuplicates(list: Station[]): Station[] {
       if (m) {
         m.stopIds.push(...s.stopIds)
         m.modes |= s.modes
+        m.cats |= s.cats
         m.deps += s.deps
         m.plats.push(...s.plats)
       } else done.push({ ...s, stopIds: [...s.stopIds], plats: [...s.plats] })
@@ -306,13 +337,14 @@ const PLATFORM_MERGE_M = 8
 
 function platforms(list: Platform[]): Platform[] {
   const out: Platform[] = []
-  for (const [lat, lon, code, modes, ids] of list) {
+  for (const [lat, lon, code, modes, ids, cats] of list) {
     const near = out.find(o => dist({ lat: o[0], lon: o[1] }, { lat, lon }) < PLATFORM_MERGE_M)
     if (near) {
       near[3] |= modes
       near[4].push(...ids)
+      near[5] |= cats || 0
       if (code && !near[2].split('/').includes(code)) near[2] = near[2] ? `${near[2]}/${code}` : code
-    } else out.push([+lat.toFixed(5), +lon.toFixed(5), code, modes, [...ids]])
+    } else out.push([+lat.toFixed(5), +lon.toFixed(5), code, modes, [...ids], cats || 0])
   }
   return out
 }
@@ -324,7 +356,7 @@ export function stationsJson(stations: Station[]) {
       const row: unknown[] = [s.id, s.name, +s.lat.toFixed(5), +s.lon.toFixed(5), s.modes, s.stopIds.length > 1 ? s.stopIds : null, s.deps]
       // platforms only where there is more than one place to stand (old apps ignore this field)
       const p = platforms(s.plats)
-      if (p.length > 1) row.push(p)
+      row.push(p.length > 1 ? p : null, s.cats)
       return row
     })
   const body = JSON.stringify(list)

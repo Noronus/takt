@@ -9,6 +9,10 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -76,10 +80,48 @@ private val shapes = Shapes(
 
 val LocalDark = compositionLocalOf { false }
 
+/** Accent colours to pick in the settings: [dark] on the dark theme, [light] (darker, white text on it) on the light one. */
+class Accent(val key: String, val label: String, val dark: Color, val light: Color)
+val ACCENTS = listOf(
+    Accent("green", "Grün", Color(0xFF3DDC97), Color(0xFF0A8F5E)),
+    Accent("teal", "Türkis", Color(0xFF34D3D9), Color(0xFF00808A)),
+    Accent("blue", "Blau", Color(0xFF6AA8FF), Color(0xFF1F63D6)),
+    Accent("violet", "Violett", Color(0xFFB48CFF), Color(0xFF7344D6)),
+    Accent("pink", "Pink", Color(0xFFFF7AB8), Color(0xFFC4246F)),
+    Accent("orange", "Orange", Color(0xFFFFA552), Color(0xFFC2570A)),
+    Accent("yellow", "Gelb", Color(0xFFF5D04A), Color(0xFF8A6D00)),
+)
+/** "system": the wallpaper colours of Android 12 and later */
+val dynamicAccent = android.os.Build.VERSION.SDK_INT >= 31
+
+private fun accented(base: androidx.compose.material3.ColorScheme, key: String, d: Boolean, ctx: android.content.Context): androidx.compose.material3.ColorScheme {
+    if (key == "green") return base
+    if (key == "system" && dynamicAccent) {
+        val s = if (d) androidx.compose.material3.dynamicDarkColorScheme(ctx) else androidx.compose.material3.dynamicLightColorScheme(ctx)
+        return base.copy(primary = s.primary, onPrimary = s.onPrimary, primaryContainer = s.primaryContainer, onPrimaryContainer = s.onPrimaryContainer)
+    }
+    val a = ACCENTS.firstOrNull { it.key == key } ?: return base
+    return if (d) base.copy(primary = a.dark, onPrimary = lerp(a.dark, Color.Black, 0.85f),
+        primaryContainer = lerp(base.background, a.dark, 0.22f), onPrimaryContainer = lerp(a.dark, Color.White, 0.65f))
+    else base.copy(primary = a.light, onPrimary = Color.White,
+        primaryContainer = lerp(Color.White, a.light, 0.16f), onPrimaryContainer = lerp(a.light, Color.Black, 0.55f))
+}
+
+/** The accent as "#RRGGBB" for map layers (they are drawn on the map's own dark or light style). */
+fun accentHex(key: String, dark: Boolean, ctx: android.content.Context): String {
+    val c = accented(if (dark) darkScheme else lightScheme, key, dark, ctx).primary
+    return String.format("#%06X", 0xFFFFFF and c.toArgb())
+}
+private val darkScheme get() = dark
+private val lightScheme get() = light
+
 @Composable
 fun TaktTheme(content: @Composable () -> Unit) {
     val d = isSystemInDarkTheme()
-    MaterialTheme(colorScheme = if (d) dark else light, typography = typography, shapes = shapes) {
+    val accent by app.takt.TaktApp.instance.prefs.accent.collectAsState()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scheme = androidx.compose.runtime.remember(d, accent) { accented(if (d) dark else light, accent, d, ctx) }
+    MaterialTheme(colorScheme = scheme, typography = typography, shapes = shapes) {
         androidx.compose.runtime.CompositionLocalProvider(LocalDark provides d, content = content)
     }
 }

@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
 import java.io.File
 import java.text.Normalizer
 import kotlin.math.cos
@@ -24,6 +25,48 @@ fun stationColor(m: Int): String = when {
     m and Modes.RAIL != 0 -> "#64748B"
     m and Modes.BUS != 0 -> "#8E4FD1"
     else -> "#475569"
+}
+
+/**
+ * Which kinds of transport are shown. Categories come from the server ([Dep.cat], [Station.cats]): buses are split
+ * into city, regional and long-distance buses; rail replacement buses count as the rail line. An older server sends
+ * none, then the category follows the mode (a bus is a city bus, a bus stop serves every kind of bus).
+ */
+object ModeFilter {
+    val OPTIONS = listOf(
+        "tram" to "Straßenbahn", "sbahn" to "S-Bahn", "train" to "Regionalzug",
+        "citybus" to "Stadtbus", "regiobus" to "Regionalbus", "coach" to "Fernbus", "ferry" to "Fähre",
+    )
+    private val BITS = mapOf("tram" to 1, "sbahn" to 2, "train" to 4, "citybus" to 8, "regiobus" to 16, "coach" to 32, "ferry" to 64, "other" to 128)
+    private const val ALL_BUS = 8 or 16 or 32
+
+    fun bits(hidden: Set<String>) = hidden.fold(0) { a, m -> a or (BITS[m] ?: 0) }
+    fun cat(cat: String?, mode: String) = cat ?: when (mode) { "bus" -> "citybus"; "tram", "sbahn", "train", "ferry" -> mode; else -> "other" }
+    /** a departure, vehicle or line */
+    fun shown(cat: String?, mode: String, hidden: Set<String>) = hidden.isEmpty() || cat(cat, mode) !in hidden
+    private fun fromModes(m: Int): Int {
+        var c = 0
+        if (m and Modes.TRAM != 0) c = c or 1
+        if (m and Modes.SUBURBAN != 0) c = c or 2
+        if (m and Modes.RAIL != 0) c = c or 4
+        if (m and Modes.BUS != 0) c = c or ALL_BUS
+        if (m and Modes.FERRY != 0) c = c or 64
+        if (m and (Modes.SUBWAY or Modes.OTHER) != 0) c = c or 128
+        return c
+    }
+    fun shownStation(cats: Int, modes: Int, hiddenBits: Int): Boolean {
+        if (hiddenBits == 0) return true
+        val c = if (cats != 0) cats else fromModes(modes)
+        return c == 0 || c and hiddenBits.inv() != 0
+    }
+    /** stations without hidden-only ones, and their platforms likewise */
+    fun stations(list: List<Station>, hidden: Set<String>): List<Station> {
+        val hb = bits(hidden)
+        if (hb == 0) return list
+        return list.filter { shownStation(it.cats, it.modes, hb) }.map { s ->
+            if (s.plats.isEmpty()) s else s.copy(plats = s.plats.filter { shownStation(it.cats, it.modes, hb) }.takeIf { it.size > 1 } ?: emptyList())
+        }
+    }
 }
 
 object Modes {
@@ -40,6 +83,8 @@ data class Station(
     val rank: Int,
     /** Single stopping points (platforms) of the station; empty when there is only one. */
     val plats: List<Platform> = emptyList(),
+    /** category bits (see [ModeFilter]); 0 from an older server */
+    val cats: Int = 0,
 ) {
     /** Normalized name for search; computed on first search, not at startup. */
     val key: String by lazy(LazyThreadSafetyMode.NONE) { Stations.norm(name) }
@@ -48,7 +93,7 @@ data class Station(
 }
 
 /** One stopping point of a station; [code] is the platform label ("2", "1/3") or empty, [ids] its MOTIS stop ids. */
-data class Platform(val lat: Double, val lon: Double, val code: String, val modes: Int, val ids: List<String>) {
+data class Platform(val lat: Double, val lon: Double, val code: String, val modes: Int, val ids: List<String>, val cats: Int = 0) {
     /** Key for the server's platform filter and for map features. */
     val key: String get() = ids.joinToString(",")
 }
@@ -115,8 +160,10 @@ class Stations(private val ctx: Context, private val api: Api) {
                 plats = (a.getOrNull(7) as? JsonArray)?.map { p ->
                     val q = p as JsonArray
                     Platform(q[0].jsonPrimitive.double, q[1].jsonPrimitive.double, q[2].jsonPrimitive.content, q[3].jsonPrimitive.int,
-                        (q.getOrNull(4) as? JsonArray)?.map { it.jsonPrimitive.content } ?: emptyList())
+                        (q.getOrNull(4) as? JsonArray)?.map { it.jsonPrimitive.content } ?: emptyList(),
+                        (q.getOrNull(5) as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull ?: 0)
                 } ?: emptyList(),
+                cats = (a.getOrNull(8) as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull ?: 0,
             )
         }
         byId = out.associateBy { it.id }
@@ -137,7 +184,7 @@ class Stations(private val ctx: Context, private val api: Api) {
     /** Version of the GeoJSON file the map can load directly, or null if there is none yet. */
     fun geoFileVersion(): String? = geoVersionFile.takeIf { it.exists() && geoFile.exists() }?.readText()
 
-    private fun buildGeoJson(list: List<Station>): String {
+    fun buildGeoJson(list: List<Station>): String {
         val sb = StringBuilder(list.size * 160)
         sb.append("{\"type\":\"FeatureCollection\",\"features\":[")
         val big = { m: Int -> if (m and (Modes.TRAM or Modes.SUBURBAN or Modes.RAIL) != 0) 1 else 0 }
@@ -164,10 +211,11 @@ class Stations(private val ctx: Context, private val api: Api) {
         return sb.toString()
     }
 
-    fun nearby(lat: Double, lon: Double, n: Int = 20, modes: Int = 0): List<Nearby> {
+    /** [hiddenBits]: stations serving only these modes are left out (see [ModeFilter]). */
+    fun nearby(lat: Double, lon: Double, n: Int = 20, modes: Int = 0, hiddenBits: Int = 0): List<Nearby> {
         val k = cos(Math.toRadians(lat))
         return _list.value.asSequence()
-            .filter { modes == 0 || it.modes and modes != 0 }
+            .filter { (modes == 0 || it.modes and modes != 0) && ModeFilter.shownStation(it.cats, it.modes, hiddenBits) }
             .map { s ->
                 val dy = (s.lat - lat) * 111_320.0
                 val dx = (s.lon - lon) * 111_320.0 * k

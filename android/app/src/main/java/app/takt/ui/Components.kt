@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -397,11 +398,11 @@ fun placeName(n: String, first: Boolean): String = when {
     else -> JourneyState.to?.name?.let(::shortName) ?: "Ziel"
 }
 
-/** Drops departures that already left (matters when showing cached data). */
 /** Departures still to come, plus those that left within the "vergangene Fahrten" setting. */
 fun upcoming(deps: List<Dep>, nowS: Long): List<Dep> {
     val keep = maxOf(30L, app.takt.TaktApp.instance.prefs.pastMin * 60L)
-    return deps.filter { (it.rt ?: it.t) >= nowS - keep }
+    val hidden = app.takt.TaktApp.instance.prefs.hiddenModes.value
+    return deps.filter { (it.rt ?: it.t) >= nowS - keep && ModeFilter.shown(it.cat, it.mode, hidden) }
 }
 
 /** Settings gear, top right on every main screen. */

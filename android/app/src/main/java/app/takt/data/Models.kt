@@ -10,6 +10,8 @@ data class Dep(
     val trip: String = "",
     val line: String = "",
     val mode: String = "other",
+    /** finer kind (citybus, regiobus, coach, …), see ModeFilter */
+    val cat: String? = null,
     val color: String? = null,
     val textColor: String? = null,
     val dir: String = "",
@@ -27,7 +29,7 @@ data class Dep(
 )
 
 /** Next departure per platform: stations[stationId][platformStopId]. */
-@Serializable data class NextDep(val line: String = "", val mode: String = "other", val color: String? = null, val t: Long = 0, val rt: Long? = null)
+@Serializable data class NextDep(val line: String = "", val mode: String = "other", val cat: String? = null, val color: String? = null, val t: Long = 0, val rt: Long? = null)
 @Serializable data class NextResponse(val now: Long = 0, val stations: Map<String, Map<String, NextDep>> = emptyMap())
 
 @Serializable
@@ -154,7 +156,7 @@ data class Alert(
 /** One stop-to-stop piece of a running trip (server: /api/v1/vehicles, from MOTIS railviz). */
 @Serializable
 data class VehicleSeg(
-    val trip: String, val line: String = "", val mode: String = "other", val color: String? = null,
+    val trip: String, val line: String = "", val mode: String = "other", val cat: String? = null, val color: String? = null,
     val dep: Long, val arr: Long, val rt: Boolean = false, val to: String? = null,
     val poly: String, val precision: Int = 5,
 )

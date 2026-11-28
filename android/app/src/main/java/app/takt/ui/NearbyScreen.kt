@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import android.Manifest
 import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -194,7 +195,7 @@ fun NearbyScreen(nav: Nav) {
         }
         val l = Position.loc
         if (l != null) {
-            val list = app.stations.nearby(l.latitude, l.longitude, 25)
+            val list = app.stations.nearby(l.latitude, l.longitude, 25, hiddenBits = ModeFilter.bits(app.prefs.hiddenModes.value))
             itemsIndexed(list, key = { _, n -> "n" + n.station.id }) { i, n -> GroupedStationRow(n.station, n.meters, nav, i, list.size) }
         } else if (hasPerm) item { Text("Warte auf Standort …", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }

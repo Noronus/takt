@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import app.takt.TaktApp
 import app.takt.data.NextDep
 import app.takt.data.Station
@@ -35,7 +36,8 @@ object PlatformLines {
             val vis = m.projection.visibleRegion.latLngBounds
             val dLat = vis.latitudeSpan * 0.2; val dLon = vis.longitudeSpan * 0.2
             val cLat = vis.center.latitude; val cLon = vis.center.longitude
-            val list = TaktApp.instance.stations.list.value.asSequence()
+            val hidden = TaktApp.instance.prefs.hiddenModes.value
+            val list = ModeFilter.stations(TaktApp.instance.stations.list.value, hidden).asSequence()
                 .filter { it.lat in (vis.latitudeSouth - dLat)..(vis.latitudeNorth + dLat) && it.lon in (vis.longitudeWest - dLon)..(vis.longitudeEast + dLon) }
                 .sortedBy { (it.lat - cLat) * (it.lat - cLat) + (it.lon - cLon) * (it.lon - cLon) }
                 .take(MAX).toList()
@@ -67,7 +69,8 @@ object PlatformLines {
     private fun geojson(list: List<Station>, next: Map<String, Map<String, NextDep>>, codes: Boolean): String {
         val sb = StringBuilder(EMPTY.removeSuffix("]}"))
         for (s in list) {
-            val byStop = next[s.id].orEmpty()
+            val hidden = TaktApp.instance.prefs.hiddenModes.value
+            val byStop = next[s.id].orEmpty().filterValues { ModeFilter.shown(it.cat, it.mode, hidden) }
             // station dot: the earliest departure of all its platforms
             byStop.values.minByOrNull { it.rt ?: it.t }?.let { d ->
                 sb.feature(s.lat, s.lon, "\"kind\":\"st\",\"pl\":${if (s.plats.isNotEmpty()) 1 else 0},\"line\":${JsonPrimitive(d.line)}")

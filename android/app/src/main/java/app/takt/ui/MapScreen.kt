@@ -1,5 +1,6 @@
 package app.takt.ui
 
+import app.takt.data.ModeFilter
 import android.content.Context
 import android.graphics.RectF
 import android.view.ViewGroup
@@ -165,6 +166,12 @@ class MapHolder(ctx: Context) {
 
     /** Station data version currently in the map source. */
     var shownVersion: String? = null
+    /** accent colour for the selection ring and the journey's start ("#RRGGBB") */
+    var accent = "#3DDC97"
+    fun applyAccent(hex: String) {
+        accent = hex
+        (style?.getLayer("sel-ring") as? CircleLayer)?.setProperties(circleColor(hex), circleStrokeColor(hex))
+    }
 
     fun applyStyle(dark: Boolean, geojson: String?, sat: Boolean = false) {
         val m = map ?: return
@@ -217,8 +224,8 @@ class MapHolder(ctx: Context) {
                 textAllowOverlap(true), textIgnorePlacement(true),
             ).apply { minZoom = PlatformLines.LABEL_ZOOM.toFloat(); setFilter(all(eq(get("kind"), "st"), any(eq(get("pl"), 0), lt(zoom(), PLAT_ZOOM)))) })
             .withLayer(CircleLayer("sel-ring", "sel").withProperties(
-                circleRadius(15f), circleColor("#3DDC97"), circleOpacity(0.25f),
-                circleStrokeColor("#3DDC97"), circleStrokeWidth(3f),
+                circleRadius(15f), circleColor(accent), circleOpacity(0.25f),
+                circleStrokeColor(accent), circleStrokeWidth(3f),
             ))
             .withLayer(SymbolLayer("st-name", "stations").withProperties(
                 textField(get("name")),
@@ -317,7 +324,7 @@ class MapHolder(ctx: Context) {
             }
         }
         // start and end of the whole journey (addresses included)
-        it?.legs?.firstOrNull()?.from?.let { p -> point(p.lat, p.lon, "\"c\":\"#3DDC97\",\"end\":1", shortName(p.name)) }
+        it?.legs?.firstOrNull()?.from?.let { p -> point(p.lat, p.lon, "\"c\":\"$accent\",\"end\":1", shortName(p.name)) }
         it?.legs?.lastOrNull()?.to?.let { p -> point(p.lat, p.lon, "\"c\":\"#FFFFFF\",\"end\":2", shortName(p.name)) }
         // stations whose name is shown by the route itself: left out of the dimmed station names
         val routeIds = it?.legs?.flatMap { l -> listOfNotNull(l.from.station, l.to.station) }?.distinct().orEmpty()
@@ -547,7 +554,23 @@ fun MapScreen(nav: Nav) {
         val g = geojson ?: kotlinx.coroutines.withTimeoutOrNull(400) { app.stations.geojson.filterNotNull().first() }
         holder.applyStyle(mapDark, g, mapSat)
     }
-    LaunchedEffect(holder.style, geojson) { geojson?.let { holder.setStations(it, app.stations.version) } }
+    // stations of hidden modes are left out of the map (a filtered copy; the full one stays cached as a file)
+    val hiddenModes by app.prefs.hiddenModes.collectAsState()
+    val accentKey by app.prefs.accent.collectAsState()
+    LaunchedEffect(holder.style, accentKey, mapDark) {
+        holder.applyAccent(accentHex(accentKey, mapDark, ctx))
+        holder.setRoute(MapRoute.itinerary)
+    }
+    LaunchedEffect(holder.style, geojson, hiddenModes) {
+        val g = geojson ?: return@LaunchedEffect
+        if (hiddenModes.isEmpty()) holder.setStations(g, app.stations.version)
+        else {
+            val f = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                app.stations.buildGeoJson(ModeFilter.stations(app.stations.list.value, hiddenModes))
+            }
+            holder.setStations(f, app.stations.version + "|" + hiddenModes.sorted().joinToString(","))
+        }
+    }
     // a tapped station (or platform) is zoomed to and centred in the map above the panel
     var panelH by remember { mutableIntStateOf(0) }
     val bottomInsetPx = with(androidx.compose.ui.platform.LocalDensity.current) { LocalBottomInset.current.roundToPx() }
