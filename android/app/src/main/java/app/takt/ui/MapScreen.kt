@@ -74,6 +74,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -394,6 +396,21 @@ class MapHolder(ctx: Context) {
         if (d > 0) map?.animateCamera(u, d) else map?.moveCamera(u)
     }
 
+    /**
+     * Shows both points in the map area between [topPx] and [bottomPx] (e.g. above the station panel), at most at
+     * [maxZoom] so two close points are not zoomed in too far.
+     */
+    fun fitBoth(a: LatLng, b: LatLng, maxZoom: Double, sidePx: Int, topPx: Int, bottomPx: Int) {
+        val m = map ?: return
+        val bounds = org.maplibre.android.geometry.LatLngBounds.Builder().include(a).include(b).build()
+        val fit = runCatching { m.getCameraForLatLngBounds(bounds, intArrayOf(sidePx, topPx, sidePx, bottomPx)) }.getOrNull()
+        val zoom = minOf(fit?.zoom ?: maxZoom, maxZoom)
+        val pos = CameraPosition.Builder().target(bounds.center).zoom(zoom).padding(0.0, topPx.toDouble(), 0.0, bottomPx.toDouble()).build()
+        val u = CameraUpdateFactory.newCameraPosition(pos)
+        val d = Anim.ms(500)
+        if (d > 0) m.animateCamera(u, d) else m.moveCamera(u)
+    }
+
     /** Live vehicles: dots in line colour with the line number, above the route lines but below all stops, so they never hide a stop. */
     fun setVehicles(geojson: String) {
         val st = style ?: return
@@ -534,6 +551,7 @@ fun MapScreen(nav: Nav) {
     // a tapped station (or platform) is zoomed to and centred in the map above the panel
     var panelH by remember { mutableIntStateOf(0) }
     val bottomInsetPx = with(androidx.compose.ui.platform.LocalDensity.current) { LocalBottomInset.current.roundToPx() }
+    val topInsetPx = WindowInsets.statusBars.getTop(androidx.compose.ui.platform.LocalDensity.current)
     // (a platform tap sets the platform in the same click, so it is known here)
     LaunchedEffect(MapSel.focusReq) {
         if (MapSel.focusReq == MapSel.focusDone) return@LaunchedEffect
@@ -598,9 +616,20 @@ fun MapScreen(nav: Nav) {
                 RoundButton(Icons.Rounded.MyLocation, "Mein Standort", {
                     if (!app.loc.hasPermission()) askPerm()
                     else scope.launch {
-                        Position.loc?.let { holder.moveTo(LatLng(it.latitude, it.longitude), 16.0) }
+                        // with a station open: fit it and the user above the panel, else centre on the user
+                        fun show(l: android.location.Location) {
+                            val me = LatLng(l.latitude, l.longitude)
+                            val st = app.stations.get(MapSel.selected)
+                            if (st == null || panelH == 0) { holder.moveTo(me, 16.0); return }
+                            val p = st.plats.firstOrNull { it.key == MapSel.platform }
+                            with(density) {
+                                holder.fitBoth(LatLng(p?.lat ?: st.lat, p?.lon ?: st.lon), me, 16.5, 56.dp.roundToPx(),
+                                    topInsetPx + 80.dp.roundToPx(), panelH + bottomInsetPx + 130.dp.roundToPx())
+                            }
+                        }
+                        Position.loc?.let(::show)
                         refreshPosition()
-                        Position.loc?.let { holder.moveTo(LatLng(it.latitude, it.longitude), 16.0) }
+                        Position.loc?.let(::show)
                     }
                 })
                 RoundButton(androidx.compose.material.icons.Icons.Rounded.Settings, "Einstellungen", { nav.settings() })
